@@ -20,7 +20,7 @@ def send_message(chat_id, text):
     )
 
 # Webhook principal que recibe mensajes de Telegram
-@app.route("/", methods=["POST"])
+@app.route("/elielthali/eliel/v1.0", methods=["POST"])
 def webhook():
     data = request.get_json()
     if "message" in data:
