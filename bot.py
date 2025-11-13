@@ -1,156 +1,77 @@
+import os
+import logging
 import requests
 import time
-import os
-import platform
-import psutil
-import datetime
-import socket
-import logging
 
-# Configurar logging para ver qué pasa
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+# Configuración básica de logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-API_URL = f"https://api.telegram.org/bot{TOKEN}"
-
-class TelegramBot:
-    def __init__(self):
-        self.offset = None
-        logger.info("🚀 Bot de Telegram iniciado (Modo Polling)")
+def main():
+    logger.info("🔍 INICIANDO DIAGNÓSTICO CHOREO WORKER")
     
-    def get_updates(self):
-        """Obtener mensajes nuevos de Telegram"""
-        try:
-            url = f"{API_URL}/getUpdates"
-            params = {"timeout": 30, "offset": self.offset}
-            response = requests.get(url, params=params, timeout=35)
-            response.raise_for_status()
-            return response.json().get("result", [])
-        except Exception as e:
-            logger.error(f"❌ Error obteniendo updates: {e}")
-            return []
+    # 1. Verificar variable de entorno
+    token = os.getenv("TELEGRAM_TOKEN")
+    if not token:
+        logger.error("❌ TELEGRAM_TOKEN NO CONFIGURADO")
+        return
     
-    def send_message(self, chat_id, text):
-        """Enviar mensaje a Telegram"""
-        try:
-            response = requests.post(
-                f"{API_URL}/sendMessage",
-                json={
-                    "chat_id": chat_id, 
-                    "text": text, 
-                    "parse_mode": "Markdown"
-                },
-                timeout=10
-            )
-            if response.status_code == 200:
-                logger.info(f"✅ Mensaje enviado a {chat_id}")
-            return response.status_code == 200
-        except Exception as e:
-            logger.error(f"❌ Error enviando mensaje: {e}")
-            return False
+    logger.info(f"✅ TELEGRAM_TOKEN: {token[:10]}...")
     
-    def get_server_status(self):
-        """Obtener información del servidor (tu código original)"""
-        try:
-            uptime = datetime.datetime.now() - datetime.datetime.fromtimestamp(psutil.boot_time())
-            cpu_percent = psutil.cpu_percent(interval=0.5)
-            cpu_count = psutil.cpu_count()
-            mem = psutil.virtual_memory()
-            disk = psutil.disk_usage("/")
-            
-            try:
-                ip_addr = socket.gethostbyname(socket.gethostname())
-            except:
-                ip_addr = "No disponible"
-
-            info = (
-                "🖥️ *Estado del servidor Choreo*\n"
-                f"🏠 Hostname: `{socket.gethostname()}`\n"
-                f"💻 Plataforma: `{platform.system()} {platform.release()}`\n"
-                f"⏱️ Uptime: `{str(uptime).split('.')[0]}`\n"
-                f"🌐 IP contenedor: `{ip_addr}`\n"
-                f"⚙️ CPU: `{cpu_percent}%` ({cpu_count} núcleos)\n"
-                f"💾 Memoria: `{mem.percent}%` usada\n"
-                f"🗄️ Disco: `{disk.percent}%` usado\n"
-                f"🔧 Modo: `Polling (getUpdates)`\n"
-                "✅ **Bot funcionando correctamente**"
-            )
-            return info
-        except Exception as e:
-            return f"❌ Error obteniendo info del servidor: {str(e)}"
+    # 2. Verificar conexión a internet
+    try:
+        response = requests.get("https://httpbin.org/get", timeout=10)
+        logger.info("✅ Conexión a internet: OK")
+    except Exception as e:
+        logger.error(f"❌ Sin conexión a internet: {e}")
+        return
     
-    def convert_bytes(self, size):
-        """Convertir bytes a formato legible"""
-        for unit in ['B','KB','MB','GB','TB']:
-            if size < 1024.0:
-                return f"{size:.2f}{unit}"
-            size /= 1024.0
-        return f"{size:.2f}PB"
-    
-    def process_message(self, message):
-        """Procesar mensaje recibido"""
-        chat_id = message["chat"]["id"]
-        text = message.get("text", "").lower()
+    # 3. Verificar conexión a Telegram
+    try:
+        api_url = f"https://api.telegram.org/bot{token}/getMe"
+        response = requests.get(api_url, timeout=10)
         
-        logger.info(f"📩 Mensaje recibido: {text} de {chat_id}")
-        
-        if text == "/start":
-            self.send_message(chat_id, 
-                "👋 ¡Hola! Soy tu bot en Choreo 🚀\n"
-                "Usa /status para ver información del servidor.\n"
-                "🔧 *Modo:* Polling (getUpdates)"
-            )
-        elif text == "/status":
-            server_info = self.get_server_status()
-            self.send_message(chat_id, server_info)
-        elif text == "/ping":
-            self.send_message(chat_id, "🏓 ¡Pong! Bot activo en Choreo")
+        if response.status_code == 200:
+            bot_info = response.json()
+            logger.info(f"✅ Conexión Telegram: OK - @{bot_info['result']['username']}")
         else:
-            self.send_message(chat_id, 
-                "🤖 No entendí tu mensaje, pero estoy activo en Choreo 😎\n"
-                "Usa /status para ver info del servidor"
-            )
+            logger.error(f"❌ Error Telegram API: {response.status_code} - {response.text}")
+            return
+            
+    except Exception as e:
+        logger.error(f"❌ Error conectando a Telegram: {e}")
+        return
     
-    def run(self):
-        """Bucle principal de polling"""
-        logger.info("🔄 Iniciando bucle de polling...")
-        
-        while True:
-            try:
-                updates = self.get_updates()
-                
-                if updates:
-                    logger.info(f"📥 {len(updates)} mensajes nuevos")
-                
-                for update in updates:
-                    # Actualizar offset para no procesar dos veces el mismo mensaje
-                    self.offset = update["update_id"] + 1
+    # 4. Probar polling simple
+    logger.info("🔄 Probando polling...")
+    offset = None
+    
+    for i in range(5):  # Solo 5 intentos para prueba
+        try:
+            params = {"timeout": 10, "offset": offset}
+            response = requests.get(f"https://api.telegram.org/bot{token}/getUpdates", params=params, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("ok"):
+                    updates = data.get("result", [])
+                    logger.info(f"📥 Ciclo {i+1}: {len(updates)} mensajes")
                     
-                    if "message" in update:
-                        self.process_message(update["message"])
-                    else:
-                        logger.info(f"📨 Update sin message: {update}")
+                    if updates:
+                        for update in updates:
+                            logger.info(f"📩 Mensaje: {update}")
+                            offset = update["update_id"] + 1
+                else:
+                    logger.error(f"❌ Telegram error: {data}")
+            else:
+                logger.error(f"❌ HTTP error: {response.status_code}")
                 
-                # Pequeña pausa entre ciclos de polling
-                time.sleep(1)
-                
-            except KeyboardInterrupt:
-                logger.info("🛑 Bot detenido por el usuario")
-                break
-            except Exception as e:
-                logger.error(f"💥 Error en bucle principal: {e}")
-                time.sleep(5)  # Esperar más en caso de error
+        except Exception as e:
+            logger.error(f"❌ Error en polling: {e}")
+        
+        time.sleep(2)
+    
+    logger.info("🏁 Diagnóstico completado")
 
 if __name__ == "__main__":
-    logger.info("🎯 Iniciando Bot de Telegram...")
-    
-    if not TOKEN:
-        logger.error("❌ TELEGRAM_TOKEN no configurado")
-        exit(1)
-    
-    bot = TelegramBot()
-    bot.run()
+    main()
