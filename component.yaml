@@ -1,7 +1,0 @@
-name: telegram-bot
-type: REST
-runtime: python3.11
-entrypoint: bot.py
-port: 8000
-environment:
-  TELEGRAM_TOKEN: "8173367544:AAEsHx3oup_o16Xa4QubIpQzm09QNHv3tpo"
