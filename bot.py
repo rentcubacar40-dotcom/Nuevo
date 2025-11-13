@@ -8,34 +8,37 @@ import socket
 
 app = Flask(__name__)
 
+# Token del bot desde variables de entorno
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 API_URL = f"https://api.telegram.org/bot{TOKEN}"
 
-# 🧩 Función para enviar mensajes
+# Función para enviar mensajes a Telegram
 def send_message(chat_id, text):
-    requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"})
+    requests.post(
+        f"{API_URL}/sendMessage",
+        json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    )
 
-# 🧩 Webhook principal
+# Webhook principal que recibe mensajes de Telegram
 @app.route("/", methods=["POST"])
 def webhook():
     data = request.get_json()
-
     if "message" in data:
         chat_id = data["message"]["chat"]["id"]
         text = data["message"].get("text", "").lower()
 
         if text == "/start":
             send_message(chat_id, "👋 ¡Hola! Soy tu bot en Choreo 🚀\nUsa /status para ver información del servidor.")
-        
+
         elif text == "/status":
             send_message(chat_id, get_server_status())
-        
+
         else:
-            send_message(chat_id, "🤖 No entendí, pero estoy activo en Choreo 😎")
+            send_message(chat_id, "🤖 No entendí tu mensaje, pero estoy activo en Choreo 😎")
 
     return "ok", 200
 
-# 🧠 Función que obtiene datos completos del servidor
+# Función que devuelve información completa del servidor
 def get_server_status():
     uptime = datetime.datetime.now() - datetime.datetime.fromtimestamp(psutil.boot_time())
     cpu_percent = psutil.cpu_percent(interval=0.5)
@@ -47,7 +50,7 @@ def get_server_status():
     except:
         ip_addr = "No disponible"
 
-    # Variables de entorno públicas (prefijo PUBLIC_ o HOSTNAME)
+    # Variables de entorno públicas
     env_vars = {k:v for k,v in os.environ.items() if k.startswith("PUBLIC_") or k=="HOSTNAME"}
 
     info = (
@@ -63,16 +66,15 @@ def get_server_status():
     )
     return info
 
-# 🧩 Función para convertir bytes a MB/GB
+# Función para convertir bytes a formato legible
 def convert_bytes(size):
-    # 2**10 = 1024
     for unit in ['B','KB','MB','GB','TB']:
         if size < 1024.0:
             return f"{size:.2f}{unit}"
         size /= 1024.0
     return f"{size:.2f}PB"
 
-# 🧩 Ruta GET para navegador
+# Endpoint GET para probar en navegador
 @app.route("/", methods=["GET"])
 def home():
     return "✅ Bot de Telegram en Choreo funcionando", 200
