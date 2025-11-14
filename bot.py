@@ -216,7 +216,7 @@ def handle_telegram_message(chat_id, message_text):
             "• `/info` - Información COMPLETA del servidor\n"
             "• `/status` - Estado rápido del sistema\n"
             "• `/stats` - Estadísticas del bot\n"
-            "• `/alive` - Test de respuesta\n\n"
+            "• `/alive` - Test de respuestaaa\n\n"
             
             "🔧 *CARACTERÍSTICAS:*\n"
             "• Keep-alive agresivo cada 5min\n"
