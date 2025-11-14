@@ -8,6 +8,10 @@ import logging
 import threading
 import psutil
 import random
+import yt_dlp
+import json
+import hashlib
+from urllib.parse import urlparse
 
 # ⚡ CONFIGURACIÓN AVANZADA DE LOGGING
 logging.basicConfig(
@@ -18,13 +22,178 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 🔥 VERSIÓN Y CONFIGURACIÓN
-BOT_VERSION = "ULTRA_ACTIVE_" + datetime.datetime.now().strftime("%m%d%H%M")
+BOT_VERSION = "ULTRA_ACTIVE_YOUTUBE_" + datetime.datetime.now().strftime("%m%d%H%M")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 API_URL = f"https://api.telegram.org/bot{TOKEN}"
 
 # 📊 CONTADORES DE ACTIVIDAD
 activity_counter = 0
 start_time = datetime.datetime.now()
+
+# 📥 CONFIGURACIÓN DE DESCARGA YOUTUBE
+DOWNLOAD_CONFIG = {
+    'download_path': './youtube_downloads',
+    'max_file_size': 500,  # MB
+    'allowed_formats': ['mp4', 'mp3', 'webm']
+}
+
+class YouTubeDownloader:
+    def __init__(self):
+        self.downloaded_videos = set()
+        self.load_downloaded_list()
+        self.setup_directories()
+        
+        self.ydl_opts = {
+            'outtmpl': os.path.join(DOWNLOAD_CONFIG['download_path'], '%(title).100s.%(ext)s'),
+            'restrictfilenames': True,
+            'nooverwrites': True,
+            'writethumbnail': False,
+        }
+    
+    def setup_directories(self):
+        """Crear directorios necesarios"""
+        os.makedirs(DOWNLOAD_CONFIG['download_path'], exist_ok=True)
+        os.makedirs('./temp', exist_ok=True)
+    
+    def load_downloaded_list(self):
+        """Cargar lista de videos ya descargados"""
+        try:
+            if os.path.exists('downloaded_videos.json'):
+                with open('downloaded_videos.json', 'r') as f:
+                    data = json.load(f)
+                    self.downloaded_videos = set(data.get('videos', []))
+        except Exception as e:
+            logger.warning(f"❌ Error cargando lista de descargas: {e}")
+    
+    def save_downloaded_list(self):
+        """Guardar lista de videos descargados"""
+        try:
+            with open('downloaded_videos.json', 'w') as f:
+                json.dump({'videos': list(self.downloaded_videos)}, f)
+        except Exception as e:
+            logger.error(f"❌ Error guardando lista de descargas: {e}")
+    
+    def get_video_id(self, url: str) -> str:
+        """Generar ID único para el video"""
+        return hashlib.md5(url.encode()).hexdigest()
+    
+    def is_valid_youtube_url(self, url: str) -> bool:
+        """Validar si es una URL de YouTube válida"""
+        try:
+            parsed = urlparse(url)
+            return any(domain in parsed.netloc for domain in ['youtube.com', 'youtu.be'])
+        except:
+            return False
+    
+    def get_video_info(self, url: str) -> dict:
+        """Obtener información del video"""
+        try:
+            with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                
+                return {
+                    'success': True,
+                    'title': info.get('title', ''),
+                    'duration': info.get('duration', 0),
+                    'uploader': info.get('uploader', ''),
+                    'view_count': info.get('view_count', 0),
+                    'thumbnail': info.get('thumbnail', ''),
+                    'webpage_url': info.get('webpage_url', ''),
+                    'timestamp': datetime.datetime.now().isoformat()
+                }
+                
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo info de YouTube: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def download_video(self, url: str, format_type: str = 'mp4') -> dict:
+        """Descargar video de YouTube"""
+        try:
+            if not self.is_valid_youtube_url(url):
+                return {'success': False, 'error': 'URL de YouTube no válida'}
+            
+            video_id = self.get_video_id(url)
+            if video_id in self.downloaded_videos:
+                return {'success': True, 'skipped': True, 'reason': 'Ya descargado anteriormente'}
+            
+            # Obtener información primero
+            info = self.get_video_info(url)
+            if not info['success']:
+                return info
+            
+            # Configurar opciones de descarga
+            download_opts = self.ydl_opts.copy()
+            
+            if format_type == 'mp3':
+                download_opts.update({
+                    'format': 'bestaudio/best',
+                    'postprocessors': [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'mp3',
+                        'preferredquality': '192',
+                    }],
+                })
+            else:
+                download_opts.update({
+                    'format': f'best[ext={format_type}]/best'
+                })
+            
+            # Descargar
+            logger.info(f"📥 Descargando: {info['title']}")
+            with yt_dlp.YoutubeDL(download_opts) as ydl:
+                ydl.download([url])
+            
+            # Buscar archivo descargado
+            downloaded_file = None
+            for filename in os.listdir(DOWNLOAD_CONFIG['download_path']):
+                if info['title'][:50] in filename:
+                    filepath = os.path.join(DOWNLOAD_CONFIG['download_path'], filename)
+                    if os.path.isfile(filepath):
+                        downloaded_file = {
+                            'filename': filename,
+                            'size_mb': round(os.path.getsize(filepath) / (1024 * 1024), 2),
+                            'path': filepath
+                        }
+                        break
+            
+            # Marcar como descargado
+            self.downloaded_videos.add(video_id)
+            self.save_downloaded_list()
+            
+            return {
+                'success': True,
+                'downloaded': True,
+                'video_info': info,
+                'downloaded_file': downloaded_file,
+                'format': format_type,
+                'timestamp': datetime.datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error descargando video: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def get_download_stats(self) -> dict:
+        """Obtener estadísticas de descargas"""
+        try:
+            files = os.listdir(DOWNLOAD_CONFIG['download_path'])
+            total_size = sum(
+                os.path.getsize(os.path.join(DOWNLOAD_CONFIG['download_path'], f)) 
+                for f in files if os.path.isfile(os.path.join(DOWNLOAD_CONFIG['download_path'], f))
+            ) / (1024 * 1024)  # MB
+            
+            return {
+                'total_downloads': len(files),
+                'total_size_mb': round(total_size, 2),
+                'downloaded_videos_count': len(self.downloaded_videos),
+                'download_path': DOWNLOAD_CONFIG['download_path']
+            }
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo stats de descargas: {e}")
+            return {'error': str(e)}
+
+# 🔥 INICIALIZAR DESCARGADOR DE YOUTUBE
+youtube_downloader = YouTubeDownloader()
 
 def bytes_to_mb(bytes_value):
     """Convertir bytes a MB"""
@@ -124,6 +293,9 @@ def get_comprehensive_system_info():
         process_memory = current_process.memory_info()
         process_cpu = current_process.cpu_percent()
         
+        # 📥 INFORMACIÓN DE DESCARGA YOUTUBE
+        download_stats = youtube_downloader.get_download_stats()
+        
         # ⏰ INFORMACIÓN DE TIEMPO
         current_time = datetime.datetime.now()
         boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
@@ -157,6 +329,11 @@ def get_comprehensive_system_info():
             f"• Total: `{bytes_to_gb(disk.total)} GB`\n"
             f"• Libre: `{bytes_to_gb(disk.free)} GB`\n\n"
             
+            "📥 *DESCARGAS YOUTUBE:*\n"
+            f"• Archivos: `{download_stats.get('total_downloads', 0)}`\n"
+            f"• Espacio Usado: `{download_stats.get('total_size_mb', 0)} MB`\n"
+            f"• Videos Únicos: `{download_stats.get('downloaded_videos_count', 0)}`\n\n"
+            
             "🌐 *RED Y CONEXIONES:*\n"
             f"• Bytes Enviados: `{bytes_to_mb(net_io.bytes_sent)} MB`\n"
             f"• Bytes Recibidos: `{bytes_to_mb(net_io.bytes_recv)} MB`\n\n"
@@ -184,11 +361,14 @@ def get_quick_status():
         memory_usage = psutil.virtual_memory().percent
         disk_usage = psutil.disk_usage('/').percent
         
+        download_stats = youtube_downloader.get_download_stats()
+        
         status_message = (
             f"⚡ *ESTADO RÁPIDO - {BOT_VERSION}*\n\n"
             f"• CPU: `{cpu_usage}%`\n"
             f"• Memoria: `{memory_usage}%`\n"
             f"• Disco: `{disk_usage}%`\n"
+            f"• Descargas YouTube: `{download_stats.get('total_downloads', 0)}`\n"
             f"• Keep-alives: `{activity_counter}`\n"
             f"• Hora: `{datetime.datetime.now().strftime('%H:%M:%S')}`\n\n"
             "✅ *Sistema funcionando correctamente*"
@@ -197,6 +377,45 @@ def get_quick_status():
         return status_message
     except Exception as e:
         return f"❌ Error: {str(e)}"
+
+def handle_youtube_download(chat_id, url, format_type='mp4'):
+    """📥 MANEJAR DESCARGA DE YOUTUBE"""
+    try:
+        # Enviar mensaje de inicio
+        send_telegram_message(chat_id, "🔄 *Iniciando descarga de YouTube...*")
+        
+        # Descargar video
+        result = youtube_downloader.download_video(url, format_type)
+        
+        if result['success']:
+            if result.get('skipped'):
+                message = (
+                    f"⏭️ *Video Ya Descargado*\n\n"
+                    f"📹 *Título:* {result['video_info']['title']}\n"
+                    f"👤 *Canal:* {result['video_info']['uploader']}\n"
+                    f"⏱️ *Duración:* {result['video_info']['duration']} segundos\n\n"
+                    f"✅ *Este video ya fue descargado anteriormente*"
+                )
+            else:
+                downloaded_file = result['downloaded_file']
+                message = (
+                    f"✅ *Descarga Completada*\n\n"
+                    f"📹 *Título:* {result['video_info']['title']}\n"
+                    f"👤 *Canal:* {result['video_info']['uploader']}\n"
+                    f"📦 *Archivo:* `{downloaded_file['filename']}`\n"
+                    f"💾 *Tamaño:* {downloaded_file['size_mb']} MB\n"
+                    f"🎬 *Formato:* {result['format'].upper()}\n"
+                    f"⏱️ *Duración:* {result['video_info']['duration']} segundos\n\n"
+                    f"📁 *Guardado en:* `{DOWNLOAD_CONFIG['download_path']}`"
+                )
+        else:
+            message = f"❌ *Error en la descarga:* {result['error']}"
+        
+        send_telegram_message(chat_id, message)
+        
+    except Exception as e:
+        error_msg = f"❌ *Error procesando descarga:* {str(e)}"
+        send_telegram_message(chat_id, error_msg)
 
 def handle_telegram_message(chat_id, message_text):
     """📨 PROCESAR MENSAJES DE TELEGRAM"""
@@ -209,17 +428,21 @@ def handle_telegram_message(chat_id, message_text):
     
     if message_text == "/start":
         welcome_message = (
-            f"🤖 *BOT CHOREO - VERSIÓN AVANZADA*\n"
+            f"🤖 *BOT CHOREO - VERSIÓN YOUTUBE AVANZADA*\n"
             f"*Versión:* `{BOT_VERSION}`\n\n"
             
             "📋 *COMANDOS DISPONIBLES:*\n"
             "• `/info` - Información COMPLETA del servidor\n"
             "• `/status` - Estado rápido del sistema\n"
             "• `/stats` - Estadísticas del bot\n"
-            "• `/alive` - Test de respuestaaa\n\n"
+            "• `/yt_download URL` - Descargar video de YouTube\n"
+            "• `/yt_mp3 URL` - Descargar audio MP3 de YouTube\n"
+            "• `/yt_stats` - Estadísticas de descargas\n"
+            "• `/alive` - Test de respuesta\n\n"
             
             "🔧 *CARACTERÍSTICAS:*\n"
             "• Keep-alive agresivo cada 5min\n"
+            "• Descargas de YouTube (MP4/MP3)\n"
             "• Monitoreo completo del sistema\n"
             "• Logs de actividad en tiempo real\n\n"
             
@@ -237,14 +460,46 @@ def handle_telegram_message(chat_id, message_text):
         
     elif message_text == "/stats":
         uptime = datetime.datetime.now() - start_time
+        download_stats = youtube_downloader.get_download_stats()
+        
         stats_message = (
             f"📊 *ESTADÍSTICAS DEL BOT - {BOT_VERSION}*\n\n"
             f"• Keep-alives ejecutados: `{activity_counter}`\n"
             f"• Tiempo activo: `{str(uptime).split('.')[0]}`\n"
+            f"• Descargas YouTube: `{download_stats.get('total_downloads', 0)}`\n"
+            f"• Espacio usado: `{download_stats.get('total_size_mb', 0)} MB`\n"
             f"• Iniciado: `{start_time.strftime('%Y-%m-%d %H:%M:%S')}`\n"
             f"• Última actividad: `{datetime.datetime.now().strftime('%H:%M:%S')}`\n"
             f"• Hostname: `{socket.gethostname()}`\n\n"
             "🔴 *Keep-alive activo cada 5 minutos*"
+        )
+        send_telegram_message(chat_id, stats_message)
+    
+    elif message_text.startswith('/yt_download '):
+        url = message_text.replace('/yt_download ', '').strip()
+        if url:
+            handle_youtube_download(chat_id, url, 'mp4')
+        else:
+            send_telegram_message(chat_id, "❌ *Uso:* `/yt_download URL_DE_YOUTUBE`")
+    
+    elif message_text.startswith('/yt_mp3 '):
+        url = message_text.replace('/yt_mp3 ', '').strip()
+        if url:
+            handle_youtube_download(chat_id, url, 'mp3')
+        else:
+            send_telegram_message(chat_id, "❌ *Uso:* `/yt_mp3 URL_DE_YOUTUBE`")
+    
+    elif message_text == "/yt_stats":
+        download_stats = youtube_downloader.get_download_stats()
+        stats_message = (
+            f"📊 *ESTADÍSTICAS YOUTUBE*\n\n"
+            f"• Total descargas: `{download_stats.get('total_downloads', 0)}`\n"
+            f"• Videos únicos: `{download_stats.get('downloaded_videos_count', 0)}`\n"
+            f"• Espacio usado: `{download_stats.get('total_size_mb', 0)} MB`\n"
+            f"• Ruta descargas: `{download_stats.get('download_path', 'N/A')}`\n\n"
+            "💡 *Comandos:*\n"
+            "• `/yt_download URL` - Descargar video MP4\n"
+            "• `/yt_mp3 URL` - Descargar audio MP3"
         )
         send_telegram_message(chat_id, stats_message)
         
@@ -258,6 +513,9 @@ def handle_telegram_message(chat_id, message_text):
             "• `/info` - Info completa del servidor\n"
             "• `/status` - Estado rápido\n"
             "• `/stats` - Estadísticas del bot\n"
+            "• `/yt_download URL` - Descargar video MP4\n"
+            "• `/yt_mp3 URL` - Descargar audio MP3\n"
+            "• `/yt_stats` - Stats de descargas\n"
             "• `/alive` - Test de respuesta\n\n"
             f"*Versión:* `{BOT_VERSION}`"
         )
@@ -297,7 +555,7 @@ def telegram_polling_loop():
                         for update in updates:
                             if "message" in update:
                                 chat_id = update["message"]["chat"]["id"]
-                                text_content = update["message"].get("text", "").strip().lower()
+                                text_content = update["message"].get("text", "").strip()
                                 handle_telegram_message(chat_id, text_content)
                             
                             # ACTUALIZAR OFFSET
@@ -344,6 +602,7 @@ def main():
         return
     
     logger.info("✅ Token de Telegram configurado correctamente")
+    logger.info("✅ Descargador de YouTube inicializado")
     
     # 🔥 INICIAR KEEP-ALIVE SUPREMO (CADA 5 MINUTOS)
     keep_alive_thread = threading.Thread(target=aggressive_keep_alive, daemon=True)
