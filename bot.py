@@ -7,248 +7,351 @@ import datetime
 import logging
 import threading
 import psutil
-import uuid
-import subprocess
+import random
 
-# Configuración de logging
+# ⚡ CONFIGURACIÓN AVANZADA DE LOGGING
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%H:%M:%S'
+    format='%(asctime)s | %(levelname)s | %(message)s',
+    datefmt='%m/%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
 
+# 🔥 VERSIÓN Y CONFIGURACIÓN
+BOT_VERSION = "ULTRA_ACTIVE_" + datetime.datetime.now().strftime("%m%d%H%M")
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 API_URL = f"https://api.telegram.org/bot{TOKEN}"
 
-def keep_alive():
-    """Mantener worker activo en Choreo"""
-    while True:
-        logger.info("❤️ Worker activo - Manteniendo servicio")
-        time.sleep(1800)  # 30 minutos
+# 📊 CONTADORES DE ACTIVIDAD
+activity_counter = 0
+start_time = datetime.datetime.now()
 
-def send_message(chat_id, text):
-    """Enviar mensaje a Telegram"""
-    try:
-        response = requests.post(
-            f"{API_URL}/sendMessage",
-            json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
-            timeout=10
-        )
-        return response.status_code == 200
-    except Exception as e:
-        logger.error(f"Error enviando mensaje: {e}")
-        return False
-
-def get_detailed_server_info():
-    """Obtener información DETALLADA del servidor Choreo"""
-    try:
-        # Información básica del sistema
-        hostname = socket.gethostname()
-        system = platform.system()
-        release = platform.release()
-        architecture = platform.machine()
-        processor = platform.processor()
-        
-        # Información de red
-        try:
-            ip_local = socket.gethostbyname(hostname)
-        except:
-            ip_local = "No disponible"
-        
-        # Información de Choreo desde variables de entorno
-        choreo_env_vars = {k: v for k, v in os.environ.items() if 'CHOREO' in k.upper()}
-        
-        # Información de Python
-        python_version = platform.python_version()
-        python_implementation = platform.python_implementation()
-        
-        # Información de procesos y recursos
-        cpu_percent = psutil.cpu_percent(interval=1)
-        cpu_count = psutil.cpu_count()
-        cpu_freq = psutil.cpu_freq()
-        memory = psutil.virtual_memory()
-        disk = psutil.disk_usage('/')
-        boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
-        uptime = datetime.datetime.now() - boot_time
-        
-        # Información de red y conexiones
-        network_io = psutil.net_io_counters()
-        
-        # Información del proceso actual
-        process = psutil.Process()
-        process_memory = process.memory_info()
-        process_cpu = process.cpu_percent()
-        
-        # Información de tiempo y fecha
-        current_time = datetime.datetime.now()
-        timezone = current_time.astimezone().tzinfo
-        
-        # Construir mensaje detallado
-        info = (
-            "🖥️ *INFORMACIÓN DETALLADA DEL SERVIDOR CHOREO*\n\n"
-            
-            "🔧 *INFORMACIÓN BÁSICA:*\n"
-            f"• Hostname: `{hostname}`\n"
-            f"• Sistema: `{system} {release}`\n"
-            f"• Arquitectura: `{architecture}`\n"
-            f"• Procesador: `{processor}`\n"
-            f"• IP Local: `{ip_local}`\n\n"
-            
-            "🐍 *INFORMACIÓN PYTHON:*\n"
-            f"• Versión: `{python_version}`\n"
-            f"• Implementación: `{python_implementation}`\n\n"
-            
-            "⚡ *RECURSOS DEL SISTEMA:*\n"
-            f"• Uso CPU: `{cpu_percent}%`\n"
-            f"• Núcleos: `{cpu_count}`\n"
-            f"• Frecuencia CPU: `{cpu_freq.current if cpu_freq else 'N/A'} MHz`\n"
-            f"• Memoria Usada: `{memory.percent}%` ({self._bytes_to_mb(memory.used)}/{self._bytes_to_mb(memory.total)} MB)\n"
-            f"• Disco Usado: `{disk.percent}%` ({self._bytes_to_gb(disk.used)}/{self._bytes_to_gb(disk.total)} GB)\n"
-            f"• Uptime: `{str(uptime).split('.')[0]}`\n\n"
-            
-            "🌐 *RED Y CONEXIONES:*\n"
-            f"• Bytes Enviados: `{self._bytes_to_mb(network_io.bytes_sent)} MB`\n"
-            f"• Bytes Recibidos: `{self._bytes_to_mb(network_io.bytes_recv)} MB`\n\n"
-            
-            "📊 *PROCESO ACTUAL:*\n"
-            f"• Memoria Proceso: `{self._bytes_to_mb(process_memory.rss)} MB`\n"
-            f"• CPU Proceso: `{process_cpu}%`\n"
-            f"• Hora Servidor: `{current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}`\n\n"
-            
-            "🔍 *VARIABLES CHOREO:*\n"
-            f"• Total Variables: `{len(choreo_env_vars)}`\n"
-        )
-        
-        # Agregar variables específicas de Choreo (primeras 3)
-        for i, (key, value) in enumerate(list(choreo_env_vars.items())[:3]):
-            info += f"• {key}: `{value[:30]}...`\n"
-        
-        info += f"\n✅ *Bot activo desde*: `{boot_time.strftime('%H:%M:%S')}`"
-        
-        return info
-        
-    except Exception as e:
-        return f"❌ Error obteniendo información del servidor: {str(e)}"
-
-def _bytes_to_mb(self, bytes_value):
+def bytes_to_mb(bytes_value):
     """Convertir bytes a MB"""
     return round(bytes_value / (1024 * 1024), 2)
 
-def _bytes_to_gb(self, bytes_value):
+def bytes_to_gb(bytes_value):
     """Convertir bytes a GB"""
     return round(bytes_value / (1024 * 1024 * 1024), 2)
 
-def get_quick_server_info():
-    """Información rápida del servidor"""
-    try:
-        hostname = socket.gethostname()
-        cpu_percent = psutil.cpu_percent(interval=0.5)
-        memory = psutil.virtual_memory()
+def aggressive_keep_alive():
+    """🔥 KEEP-ALIVE SUPER AGRESIVO CADA 5 MINUTOS"""
+    global activity_counter
+    
+    while True:
+        try:
+            # 🌐 ACTIVIDAD DE RED 1 - HTTP Request
+            requests.get("https://httpbin.org/json", timeout=10)
+            logger.info("🌐 Keep-alive: HTTP Request completada")
+            
+            # 💾 ACTIVIDAD DE DISCO - Escribir archivo
+            with open("/tmp/bot_heartbeat.txt", "w") as f:
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                f.write(f"Heartbeat: {timestamp} | Counter: {activity_counter}")
+            
+            # ⚡ ACTIVIDAD DE CPU - Cálculos intensivos
+            numbers = [random.randint(1, 1000) for _ in range(10000)]
+            sorted_numbers = sorted(numbers)
+            sum_total = sum(sorted_numbers)
+            
+            # 📊 ACTIVIDAD DE SISTEMA - Monitoreo
+            cpu_usage = psutil.cpu_percent(interval=1)
+            memory_usage = psutil.virtual_memory().percent
+            
+            # 🔄 CONTADOR Y LOG
+            activity_counter += 1
+            uptime = datetime.datetime.now() - start_time
+            
+            logger.info(f"🔴 KEEP-ALIVE #{activity_counter} | CPU: {cpu_usage}% | RAM: {memory_usage}% | Uptime: {str(uptime).split('.')[0]}")
+            
+        except Exception as e:
+            logger.error(f"❌ Keep-alive error: {e}")
         
-        info = (
-            "📊 *ESTADO RÁPIDO DEL SERVIDOR*\n"
-            f"• Hostname: `{hostname}`\n"
-            f"• CPU: `{cpu_percent}%`\n"
-            f"• Memoria: `{memory.percent}%`\n"
-            f"• Hora: `{datetime.datetime.now().strftime('%H:%M:%S')}`\n"
-            "✅ *Sistema estable*"
+        # ⏰ ESPERA 5 MINUTOS EXACTOS
+        time.sleep(300)
+
+def send_telegram_message(chat_id, text):
+    """Enviar mensaje a Telegram con manejo de errores"""
+    try:
+        response = requests.post(
+            f"{API_URL}/sendMessage",
+            json={
+                "chat_id": chat_id, 
+                "text": text, 
+                "parse_mode": "Markdown"
+            },
+            timeout=10
         )
-        return info
+        success = response.status_code == 200
+        if success:
+            logger.info(f"📤 Mensaje enviado a {chat_id}")
+        return success
+    except Exception as e:
+        logger.error(f"❌ Error enviando mensaje: {e}")
+        return False
+
+def get_comprehensive_system_info():
+    """📊 INFORMACIÓN COMPLETA DEL SISTEMA"""
+    try:
+        # 🔧 INFORMACIÓN BÁSICA
+        hostname = socket.gethostname()
+        system_info = platform.system()
+        release_info = platform.release()
+        architecture = platform.machine()
+        
+        # ⚡ INFORMACIÓN DE CPU
+        cpu_percent = psutil.cpu_percent(interval=1)
+        cpu_cores = psutil.cpu_count()
+        cpu_freq = psutil.cpu_freq()
+        
+        # 💾 INFORMACIÓN DE MEMORIA
+        memory = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+        
+        # 💽 INFORMACIÓN DE DISCO
+        disk = psutil.disk_usage('/')
+        
+        # 🌐 INFORMACIÓN DE RED
+        try:
+            ip_address = socket.gethostbyname(hostname)
+        except:
+            ip_address = "No disponible"
+        
+        net_io = psutil.net_io_counters()
+        
+        # 📊 INFORMACIÓN DEL PROCESO
+        current_process = psutil.Process()
+        process_memory = current_process.memory_info()
+        process_cpu = current_process.cpu_percent()
+        
+        # ⏰ INFORMACIÓN DE TIEMPO
+        current_time = datetime.datetime.now()
+        boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
+        system_uptime = current_time - boot_time
+        bot_uptime = current_time - start_time
+        
+        # 🎯 CONSTRUIR MENSAJE
+        info_message = (
+            f"🖥️ *INFORMACIÓN COMPLETA DEL SERVIDOR*\n"
+            f"*Versión Bot:* `{BOT_VERSION}`\n\n"
+            
+            "🔧 *INFORMACIÓN DEL SISTEMA:*\n"
+            f"• Hostname: `{hostname}`\n"
+            f"• Sistema: `{system_info} {release_info}`\n"
+            f"• Arquitectura: `{architecture}`\n"
+            f"• IP Local: `{ip_address}`\n\n"
+            
+            "⚡ *RENDIMIENTO CPU:*\n"
+            f"• Uso Actual: `{cpu_percent}%`\n"
+            f"• Núcleos: `{cpu_cores}`\n"
+            f"• Frecuencia: `{cpu_freq.current if cpu_freq else 'N/A'} MHz`\n\n"
+            
+            "💾 *MEMORIA RAM:*\n"
+            f"• Uso: `{memory.percent}%`\n"
+            f"• Total: `{bytes_to_gb(memory.total)} GB`\n"
+            f"• Disponible: `{bytes_to_gb(memory.available)} GB`\n"
+            f"• Swap: `{bytes_to_gb(swap.used)}/{bytes_to_gb(swap.total)} GB`\n\n"
+            
+            "💽 *ALMACENAMIENTO:*\n"
+            f"• Disco Usado: `{disk.percent}%`\n"
+            f"• Total: `{bytes_to_gb(disk.total)} GB`\n"
+            f"• Libre: `{bytes_to_gb(disk.free)} GB`\n\n"
+            
+            "🌐 *RED Y CONEXIONES:*\n"
+            f"• Bytes Enviados: `{bytes_to_mb(net_io.bytes_sent)} MB`\n"
+            f"• Bytes Recibidos: `{bytes_to_mb(net_io.bytes_recv)} MB`\n\n"
+            
+            "📊 *ESTADO DEL BOT:*\n"
+            f"• Memoria Usada: `{bytes_to_mb(process_memory.rss)} MB`\n"
+            f"• CPU Bot: `{process_cpu}%`\n"
+            f"• Keep-alives: `{activity_counter}`\n"
+            f"• Uptime Sistema: `{str(system_uptime).split('.')[0]}`\n"
+            f"• Uptime Bot: `{str(bot_uptime).split('.')[0]}`\n"
+            f"• Hora Servidor: `{current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}`\n\n"
+            
+            "✅ *SISTEMA ESTABLE Y MONITOREADO*"
+        )
+        
+        return info_message
+        
+    except Exception as e:
+        return f"❌ Error obteniendo información del sistema: {str(e)}"
+
+def get_quick_status():
+    """⚡ ESTADO RÁPIDO DEL SISTEMA"""
+    try:
+        cpu_usage = psutil.cpu_percent(interval=0.5)
+        memory_usage = psutil.virtual_memory().percent
+        disk_usage = psutil.disk_usage('/').percent
+        
+        status_message = (
+            f"⚡ *ESTADO RÁPIDO - {BOT_VERSION}*\n\n"
+            f"• CPU: `{cpu_usage}%`\n"
+            f"• Memoria: `{memory_usage}%`\n"
+            f"• Disco: `{disk_usage}%`\n"
+            f"• Keep-alives: `{activity_counter}`\n"
+            f"• Hora: `{datetime.datetime.now().strftime('%H:%M:%S')}`\n\n"
+            "✅ *Sistema funcionando correctamente*"
+        )
+        
+        return status_message
     except Exception as e:
         return f"❌ Error: {str(e)}"
 
-def process_message(chat_id, text):
-    """Procesar mensajes y comandos"""
-    logger.info(f"Procesando mensaje: {text} de {chat_id}")
+def handle_telegram_message(chat_id, message_text):
+    """📨 PROCESAR MENSAJES DE TELEGRAM"""
+    global activity_counter
     
-    if text == "/start":
-        welcome_msg = (
-            "🤖 *BOT CHOREO - INFORMACIÓN DEL SERVIDOR*\n\n"
-            "📋 *Comandos disponibles:*\n"
-            "• `/info` - Información detallada del servidor\n"
-            "• `/status` - Estado rápido del sistema\n"
-            "• `/resources` - Uso de recursos en tiempo real\n"
-            "• `/help` - Mostrar esta ayuda\n\n"
-            "🔧 *Servidor:* Choreo Workers\n"
-            "🔄 *Modo:* Polling activo"
-        )
-        send_message(chat_id, welcome_msg)
-        
-    elif text == "/info":
-        server_info = get_detailed_server_info()
-        # Dividir mensaje largo si es necesario
-        if len(server_info) > 4000:
-            parts = [server_info[i:i+4000] for i in range(0, len(server_info), 4000)]
-            for part in parts:
-                send_message(chat_id, part)
-                time.sleep(0.5)
-        else:
-            send_message(chat_id, server_info)
+    logger.info(f"📩 Mensaje recibido: '{message_text}' de {chat_id}")
+    
+    # 🔄 INCREMENTAR CONTADOR DE ACTIVIDAD
+    activity_counter += 1
+    
+    if message_text == "/start":
+        welcome_message = (
+            f"🤖 *BOT CHOREO - VERSIÓN AVANZADA*\n"
+            f"*Versión:* `{BOT_VERSION}`\n\n"
             
-    elif text == "/status":
-        quick_info = get_quick_server_info()
-        send_message(chat_id, quick_info)
-        
-    elif text == "/resources":
-        resources_msg = get_quick_server_info()
-        send_message(chat_id, resources_msg)
-        
-    elif text == "/help":
-        help_msg = (
-            "🆘 *AYUDA - COMANDOS DISPONIBLES*\n\n"
+            "📋 *COMANDOS DISPONIBLES:*\n"
             "• `/info` - Información COMPLETA del servidor\n"
-            "• `/status` - Estado rápido del sistema\n" 
-            "• `/resources` - Uso de recursos en tiempo real\n"
-            "• `/help` - Mostrar esta ayuda\n\n"
-            "💡 Usa `/info` para ver todos los detalles del servidor Choreo"
+            "• `/status` - Estado rápido del sistema\n"
+            "• `/stats` - Estadísticas del bot\n"
+            "• `/alive` - Test de respuesta\n\n"
+            
+            "🔧 *CARACTERÍSTICAS:*\n"
+            "• Keep-alive agresivo cada 5min\n"
+            "• Monitoreo completo del sistema\n"
+            "• Logs de actividad en tiempo real\n\n"
+            
+            "✅ *Bot optimizado para Choreo*"
         )
-        send_message(chat_id, help_msg)
+        send_telegram_message(chat_id, welcome_message)
+        
+    elif message_text == "/info":
+        system_info = get_comprehensive_system_info()
+        send_telegram_message(chat_id, system_info)
+        
+    elif message_text == "/status":
+        quick_status = get_quick_status()
+        send_telegram_message(chat_id, quick_status)
+        
+    elif message_text == "/stats":
+        uptime = datetime.datetime.now() - start_time
+        stats_message = (
+            f"📊 *ESTADÍSTICAS DEL BOT - {BOT_VERSION}*\n\n"
+            f"• Keep-alives ejecutados: `{activity_counter}`\n"
+            f"• Tiempo activo: `{str(uptime).split('.')[0]}`\n"
+            f"• Iniciado: `{start_time.strftime('%Y-%m-%d %H:%M:%S')}`\n"
+            f"• Última actividad: `{datetime.datetime.now().strftime('%H:%M:%S')}`\n"
+            f"• Hostname: `{socket.gethostname()}`\n\n"
+            "🔴 *Keep-alive activo cada 5 minutos*"
+        )
+        send_telegram_message(chat_id, stats_message)
+        
+    elif message_text == "/alive":
+        send_telegram_message(chat_id, "💓 ¡BOT VIVO Y RESPONDIENDO! ✅")
         
     else:
-        send_message(chat_id, 
+        help_message = (
             "❌ Comando no reconocido\n\n"
-            "Usa `/help` para ver los comandos disponibles"
+            "✅ *Comandos disponibles:*\n"
+            "• `/info` - Info completa del servidor\n"
+            "• `/status` - Estado rápido\n"
+            "• `/stats` - Estadísticas del bot\n"
+            "• `/alive` - Test de respuesta\n\n"
+            f"*Versión:* `{BOT_VERSION}`"
         )
+        send_telegram_message(chat_id, help_message)
 
-def main():
-    """Función principal"""
-    logger.info("🚀 Iniciando Bot Detallado de Choreo")
+def telegram_polling_loop():
+    """🔄 BUCLE PRINCIPAL DE POLLING"""
+    logger.info("🚀 INICIANDO BUCLE DE POLLING DE TELEGRAM")
     
-    # Verificar token
-    if not TOKEN:
-        logger.error("❌ TELEGRAM_TOKEN no configurado")
-        return
-    
-    # Iniciar keep-alive
-    threading.Thread(target=keep_alive, daemon=True).start()
-    logger.info("🫀 Keep-alive activado")
-    
-    # Bucle principal de polling
     offset = None
+    error_count = 0
+    
     while True:
         try:
-            params = {"timeout": 25, "offset": offset}
-            response = requests.get(f"{API_URL}/getUpdates", params=params, timeout=30)
+            # 📡 OBTENER MENSAJES DE TELEGRAM
+            polling_params = {
+                "timeout": 50,  # ⏰ Timeout largo
+                "offset": offset,
+                "limit": 100
+            }
+            
+            response = requests.get(
+                f"{API_URL}/getUpdates", 
+                params=polling_params, 
+                timeout=55
+            )
             
             if response.status_code == 200:
-                data = response.json()
-                if data.get("ok"):
-                    updates = data.get("result", [])
+                telegram_data = response.json()
+                
+                if telegram_data.get("ok"):
+                    updates = telegram_data.get("result", [])
                     
-                    for update in updates:
-                        if "message" in update:
-                            chat_id = update["message"]["chat"]["id"]
-                            text = update["message"].get("text", "").lower().strip()
-                            process_message(chat_id, text)
+                    if updates:
+                        logger.info(f"📥 {len(updates)} mensaje(s) nuevo(s) recibido(s)")
                         
-                        offset = update["update_id"] + 1
+                        for update in updates:
+                            if "message" in update:
+                                chat_id = update["message"]["chat"]["id"]
+                                text_content = update["message"].get("text", "").strip().lower()
+                                handle_telegram_message(chat_id, text_content)
+                            
+                            # ACTUALIZAR OFFSET
+                            offset = update["update_id"] + 1
+                    
+                    # 🔄 RESETEAR CONTADOR DE ERRORES
+                    error_count = 0
+                    
+                else:
+                    logger.error(f"❌ Error en API de Telegram: {telegram_data}")
+                    error_count += 1
+            else:
+                logger.error(f"❌ Error HTTP {response.status_code}")
+                error_count += 1
             
-            time.sleep(1)
+            # 🛑 MANEJO DE ERRORES CONSECUTIVOS
+            if error_count >= 3:
+                logger.warning(f"⚠️ Muchos errores consecutivos, esperando 30 segundos...")
+                time.sleep(30)
+            else:
+                time.sleep(2)  # ⏱️ Espera normal entre ciclos
+                
+        except requests.exceptions.Timeout:
+            logger.warning("⏰ Timeout en polling, continuando...")
+            continue
+            
+        except requests.exceptions.ConnectionError:
+            logger.error("🔌 Error de conexión, reintentando en 15 segundos...")
+            time.sleep(15)
             
         except Exception as e:
-            logger.error(f"Error en polling: {e}")
-            time.sleep(5)
+            logger.error(f"💥 Error inesperado en polling: {e}")
+            time.sleep(10)
+
+def main():
+    """🎯 FUNCIÓN PRINCIPAL"""
+    logger.info(f"🚀 INICIANDO BOT TELEGRAM - {BOT_VERSION}")
+    logger.info(f"📅 Hora de inicio: {datetime.datetime.now()}")
+    
+    # 🚫 VERIFICAR TOKEN
+    if not TOKEN:
+        logger.error("❌ ERROR: TELEGRAM_TOKEN no configurado")
+        logger.error("💡 Configura la variable de entorno en Choreo")
+        return
+    
+    logger.info("✅ Token de Telegram configurado correctamente")
+    
+    # 🔥 INICIAR KEEP-ALIVE SUPREMO (CADA 5 MINUTOS)
+    keep_alive_thread = threading.Thread(target=aggressive_keep_alive, daemon=True)
+    keep_alive_thread.start()
+    logger.info("🔴 KEEP-ALIVE AGRESIVO ACTIVADO - Cada 5 minutos")
+    
+    # 🔄 INICIAR POLLING DE TELEGRAM
+    telegram_polling_loop()
 
 if __name__ == "__main__":
     main()
