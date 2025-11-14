@@ -32,8 +32,8 @@ start_time = datetime.datetime.now()
 
 # 📥 CONFIGURACIÓN DE DESCARGA YOUTUBE
 DOWNLOAD_CONFIG = {
-    'download_path': './youtube_downloads',
-    'max_file_size': 500,  # MB
+    'download_path': '/tmp/youtube_downloads',
+    'max_file_size': 500,
     'allowed_formats': ['mp4', 'mp3', 'webm']
 }
 
@@ -52,23 +52,28 @@ class YouTubeDownloader:
     
     def setup_directories(self):
         """Crear directorios necesarios"""
-        os.makedirs(DOWNLOAD_CONFIG['download_path'], exist_ok=True)
-        os.makedirs('./temp', exist_ok=True)
+        try:
+            os.makedirs(DOWNLOAD_CONFIG['download_path'], exist_ok=True)
+            os.makedirs('/tmp/temp', exist_ok=True)
+            logger.info("✅ Directorios de descarga creados")
+        except Exception as e:
+            logger.warning(f"⚠️ Error creando directorios: {e}")
     
     def load_downloaded_list(self):
         """Cargar lista de videos ya descargados"""
         try:
-            if os.path.exists('downloaded_videos.json'):
-                with open('downloaded_videos.json', 'r') as f:
+            if os.path.exists('/tmp/downloaded_videos.json'):
+                with open('/tmp/downloaded_videos.json', 'r') as f:
                     data = json.load(f)
                     self.downloaded_videos = set(data.get('videos', []))
+                logger.info(f"✅ Lista de descargas cargada: {len(self.downloaded_videos)} videos")
         except Exception as e:
             logger.warning(f"❌ Error cargando lista de descargas: {e}")
     
     def save_downloaded_list(self):
         """Guardar lista de videos descargados"""
         try:
-            with open('downloaded_videos.json', 'w') as f:
+            with open('/tmp/downloaded_videos.json', 'w') as f:
                 json.dump({'videos': list(self.downloaded_videos)}, f)
         except Exception as e:
             logger.error(f"❌ Error guardando lista de descargas: {e}")
@@ -146,19 +151,20 @@ class YouTubeDownloader:
             # Buscar archivo descargado
             downloaded_file = None
             for filename in os.listdir(DOWNLOAD_CONFIG['download_path']):
-                if info['title'][:50] in filename:
-                    filepath = os.path.join(DOWNLOAD_CONFIG['download_path'], filename)
-                    if os.path.isfile(filepath):
-                        downloaded_file = {
-                            'filename': filename,
-                            'size_mb': round(os.path.getsize(filepath) / (1024 * 1024), 2),
-                            'path': filepath
-                        }
-                        break
+                filepath = os.path.join(DOWNLOAD_CONFIG['download_path'], filename)
+                if os.path.isfile(filepath):
+                    downloaded_file = {
+                        'filename': filename,
+                        'size_mb': round(os.path.getsize(filepath) / (1024 * 1024), 2),
+                        'path': filepath
+                    }
+                    break
             
             # Marcar como descargado
             self.downloaded_videos.add(video_id)
             self.save_downloaded_list()
+            
+            logger.info(f"✅ Descarga completada: {info['title']}")
             
             return {
                 'success': True,
@@ -176,6 +182,14 @@ class YouTubeDownloader:
     def get_download_stats(self) -> dict:
         """Obtener estadísticas de descargas"""
         try:
+            if not os.path.exists(DOWNLOAD_CONFIG['download_path']):
+                return {
+                    'total_downloads': 0,
+                    'total_size_mb': 0,
+                    'downloaded_videos_count': len(self.downloaded_videos),
+                    'download_path': DOWNLOAD_CONFIG['download_path']
+                }
+                
             files = os.listdir(DOWNLOAD_CONFIG['download_path'])
             total_size = sum(
                 os.path.getsize(os.path.join(DOWNLOAD_CONFIG['download_path'], f)) 
@@ -254,6 +268,8 @@ def send_telegram_message(chat_id, text):
         success = response.status_code == 200
         if success:
             logger.info(f"📤 Mensaje enviado a {chat_id}")
+        else:
+            logger.error(f"❌ Error API Telegram: {response.status_code}")
         return success
     except Exception as e:
         logger.error(f"❌ Error enviando mensaje: {e}")
@@ -532,7 +548,7 @@ def telegram_polling_loop():
         try:
             # 📡 OBTENER MENSAJES DE TELEGRAM
             polling_params = {
-                "timeout": 50,  # ⏰ Timeout largo
+                "timeout": 50,
                 "offset": offset,
                 "limit": 100
             }
@@ -576,7 +592,7 @@ def telegram_polling_loop():
                 logger.warning(f"⚠️ Muchos errores consecutivos, esperando 30 segundos...")
                 time.sleep(30)
             else:
-                time.sleep(2)  # ⏱️ Espera normal entre ciclos
+                time.sleep(2)
                 
         except requests.exceptions.Timeout:
             logger.warning("⏰ Timeout en polling, continuando...")
@@ -592,25 +608,40 @@ def telegram_polling_loop():
 
 def main():
     """🎯 FUNCIÓN PRINCIPAL"""
-    logger.info(f"🚀 INICIANDO BOT TELEGRAM - {BOT_VERSION}")
-    logger.info(f"📅 Hora de inicio: {datetime.datetime.now()}")
-    
-    # 🚫 VERIFICAR TOKEN
-    if not TOKEN:
-        logger.error("❌ ERROR: TELEGRAM_TOKEN no configurado")
-        logger.error("💡 Configura la variable de entorno en Choreo")
-        return
-    
-    logger.info("✅ Token de Telegram configurado correctamente")
-    logger.info("✅ Descargador de YouTube inicializado")
-    
-    # 🔥 INICIAR KEEP-ALIVE SUPREMO (CADA 5 MINUTOS)
-    keep_alive_thread = threading.Thread(target=aggressive_keep_alive, daemon=True)
-    keep_alive_thread.start()
-    logger.info("🔴 KEEP-ALIVE AGRESIVO ACTIVADO - Cada 5 minutos")
-    
-    # 🔄 INICIAR POLLING DE TELEGRAM
-    telegram_polling_loop()
+    try:
+        logger.info(f"🚀 INICIANDO BOT TELEGRAM - {BOT_VERSION}")
+        logger.info(f"📅 Hora de inicio: {datetime.datetime.now()}")
+        
+        # 🚫 VERIFICAR TOKEN
+        if not TOKEN:
+            logger.error("❌ ERROR: TELEGRAM_TOKEN no configurado")
+            logger.error("💡 Configura la variable de entorno en Choreo")
+            return
+        
+        logger.info("✅ Token de Telegram configurado correctamente")
+        
+        # ✅ VERIFICAR DEPENDENCIAS
+        try:
+            import yt_dlp
+            import psutil
+            logger.info("✅ Todas las dependencias cargadas correctamente")
+        except ImportError as e:
+            logger.error(f"❌ Error importando dependencias: {e}")
+            return
+        
+        logger.info("✅ Descargador de YouTube inicializado")
+        
+        # 🔥 INICIAR KEEP-ALIVE SUPREMO (CADA 5 MINUTOS)
+        keep_alive_thread = threading.Thread(target=aggressive_keep_alive, daemon=True)
+        keep_alive_thread.start()
+        logger.info("🔴 KEEP-ALIVE AGRESIVO ACTIVADO - Cada 5 minutos")
+        
+        # 🔄 INICIAR POLLING DE TELEGRAM
+        telegram_polling_loop()
+        
+    except Exception as e:
+        logger.error(f"💥 ERROR CRÍTICO: {e}")
+        time.sleep(60)
 
 if __name__ == "__main__":
     main()
