@@ -8,18 +8,18 @@ import threading
 import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Optional, Tuple
+import signal
 
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.enums import ParseMode
 
 # ==================== CONFIGURACIÓN ====================
-# ⚠️ REEMPLAZA ESTOS VALORES ⚠️
-
-API_ID = 20534584  # Tu API ID
-API_HASH = "6d5b13261d2c92a9a00afc1fd613b9df"  # Tu API Hash
-BOT_TOKEN = "8562042457:AAGA__pfWDMVfdslzqwnoFl4yLrAre-HJ5I"  # Token del bot
-ADMIN_USER_ID = 7363341763  # Tu ID de usuario
+# ⚠️ ESTAS SON VARIABLES DE EJEMPLO - USA .env EN PRODUCCIÓN
+API_ID = 20534584  # Cambia esto por tu API_ID real
+API_HASH = "6d5b13261d2c92a9a00afc1fd613b9df"  # Cambia esto por tu API_HASH
+BOT_TOKEN = "8562042457:AAGA__pfWDMVfdslzqwnoFl4yLrAre-HJ5I"  # Cambia esto por tu BOT_TOKEN
+ADMIN_USER_ID = 7363341763  # Tu ID de usuario de Telegram
 
 MAX_FILE_SIZE = 4 * 1024 * 1024 * 1024  # 4GB
 # =======================================================
@@ -38,27 +38,27 @@ logger = logging.getLogger(__name__)
 # ==================== WEB SERVER PARA RENDER ====================
 
 class HealthHandler(BaseHTTPRequestHandler):
-    """Handler simple para health checks de Render"""
+    """Handler para health checks de Render"""
     def do_GET(self):
         if self.path == '/':
             self.send_response(200)
             self.send_header('Content-type', 'text/plain')
             self.end_headers()
             self.wfile.write(b'Bot is alive')
-            logger.info("Health check received")
+            logger.debug("Health check recibido")
         else:
             self.send_response(404)
             self.end_headers()
     
     def log_message(self, format, *args):
         # Reducir logs del servidor HTTP
-        logger.debug("HTTP: %s", args[0] if args else "")
+        pass
 
 def run_web_server():
-    """Ejecuta servidor HTTP en puerto 8080 para Render"""
+    """Ejecuta servidor HTTP en el puerto asignado por Render"""
     port = int(os.environ.get('PORT', 8080))
     server = HTTPServer(('0.0.0.0', port), HealthHandler)
-    logger.info(f"✅ Web server running on port {port}")
+    logger.info(f"🌐 Servidor web iniciado en puerto {port}")
     server.serve_forever()
 
 # ==================== CLASE COMPRESOR ====================
@@ -107,7 +107,6 @@ class VideoCompressor:
         try:
             import subprocess
             
-            # Presets de compresión
             presets = {
                 'high': '-crf 28 -preset fast',
                 'medium': '-crf 23 -preset medium', 
@@ -127,7 +126,7 @@ class VideoCompressor:
                 output_path
             ]
             
-            logger.info(f"Compressing with command: {' '.join(cmd)}")
+            logger.info(f"Comprimiendo: {' '.join(cmd)}")
             
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -154,7 +153,7 @@ class VideoCompressor:
                     f"• Calidad: {quality.capitalize()}"
                 )
             else:
-                error_msg = stderr.decode()[:500]  # Limitar tamaño del error
+                error_msg = stderr.decode()[:500]
                 return False, f"❌ Error en compresión:\n```\n{error_msg}\n```"
                 
         except Exception as e:
@@ -175,7 +174,7 @@ class VideoCompressor:
             try:
                 if os.path.exists(file_path):
                     os.remove(file_path)
-                    logger.debug(f"Cleaned up: {file_path}")
+                    logger.debug(f"Archivo limpiado: {file_path}")
             except Exception as e:
                 logger.error(f"Error limpiando {file_path}: {e}")
 
@@ -190,7 +189,7 @@ os.makedirs(COMPRESSED_DIR, exist_ok=True)
 # Inicializar compresor
 compressor = VideoCompressor()
 
-# Inicializar Pyrogram Client
+# Inicializar Pyrogram Client CONFIGURADO PARA RENDER
 app = Client(
     "video_compressor_bot",
     api_id=API_ID,
@@ -198,7 +197,9 @@ app = Client(
     bot_token=BOT_TOKEN,
     workers=2,
     sleep_threshold=60,
-    in_memory=True
+    in_memory=True,
+    no_updates=True,  # ✅ Importante para evitar problemas
+    ipv6=False,       # ✅ Evitar problemas de red
 )
 
 # ==================== HANDLERS ====================
@@ -257,7 +258,6 @@ async def status_command(client: Client, message: Message):
 **Bot:**
 • Usuarios procesando: {len(compressor.processing)}
 • Estado: ✅ Operativo
-• Web server: ✅ Activo (puerto 8080)
 """
     
     await message.reply_text(status_text, parse_mode=ParseMode.MARKDOWN)
@@ -282,12 +282,10 @@ async def handle_media(client: Client, message: Message):
     user_id = message.from_user.id
     
     try:
-        # Verificar si ya está procesando
         if user_id in compressor.processing:
             await message.reply_text("⏳ Ya tienes un video en proceso. Espera a que termine.")
             return
         
-        # Obtener archivo
         if message.video:
             file = message.video
             file_name = file.file_name or f"video_{message.id}.mp4"
@@ -295,7 +293,6 @@ async def handle_media(client: Client, message: Message):
             file = message.document
             file_name = file.file_name or f"file_{message.id}"
             
-            # Verificar extensión
             ext = os.path.splitext(file_name.lower())[1]
             supported = ['.mp4', '.avi', '.mov', '.mkv', '.flv', '.webm']
             if ext not in supported:
@@ -304,24 +301,20 @@ async def handle_media(client: Client, message: Message):
                 )
                 return
         
-        # Verificar tamaño
         if file.file_size > MAX_FILE_SIZE:
             await message.reply_text(
                 f"❌ Muy grande. Máximo: {compressor.format_size(MAX_FILE_SIZE)}"
             )
             return
         
-        # Marcar como procesando
         compressor.processing[user_id] = True
         
-        # Informar al usuario
         status_msg = await message.reply_text(
             f"📥 **Descargando...**\n`{file_name}`\n"
             f"📦 {compressor.format_size(file.file_size)}",
             parse_mode=ParseMode.MARKDOWN
         )
         
-        # Descargar
         input_path = os.path.join(WORK_DIR, f"input_{user_id}_{message.id}")
         
         await client.download_media(
@@ -329,7 +322,6 @@ async def handle_media(client: Client, message: Message):
             file_name=input_path
         )
         
-        # Analizar video
         await status_msg.edit_text("📊 Analizando video...")
         video_info = await compressor.get_video_info(input_path)
         
@@ -339,7 +331,6 @@ async def handle_media(client: Client, message: Message):
             compressor.cleanup_files(input_path)
             return
         
-        # Mostrar opciones
         info_text = f"""
 🎬 **Video listo para comprimir**
 
@@ -392,7 +383,6 @@ async def handle_callback(client: Client, callback_query):
             await callback_query.answer(f"Comprimiendo con calidad {quality}...")
             await callback_query.message.edit_text(f"⚙️ Comprimiendo ({quality})...")
             
-            # Buscar archivo
             import glob
             input_files = glob.glob(os.path.join(WORK_DIR, f"input_{user_id}_*"))
             
@@ -405,11 +395,9 @@ async def handle_callback(client: Client, callback_query):
             input_path = input_files[0]
             output_path = os.path.join(COMPRESSED_DIR, f"compressed_{user_id}_{quality}.mp4")
             
-            # Comprimir
             success, result_text = await compressor.compress_video(input_path, output_path, quality)
             
             if success:
-                # Enviar video
                 await callback_query.message.edit_text("📤 Enviando video comprimido...")
                 
                 await client.send_video(
@@ -424,7 +412,6 @@ async def handle_callback(client: Client, callback_query):
             else:
                 await callback_query.message.edit_text(result_text[:1000])
             
-            # Limpiar
             compressor.cleanup_files(input_path, output_path)
             if user_id in compressor.processing:
                 del compressor.processing[user_id]
@@ -437,7 +424,6 @@ async def handle_callback(client: Client, callback_query):
                 await callback_query.answer("Este menú no es para ti", show_alert=True)
                 return
             
-            # Limpiar archivos
             import glob
             input_files = glob.glob(os.path.join(WORK_DIR, f"input_{user_id}_*"))
             for file_path in input_files:
@@ -463,10 +449,19 @@ async def handle_callback(client: Client, callback_query):
         if user_id in compressor.processing:
             del compressor.processing[user_id]
 
+# ==================== MANEJO DE SEÑALES ====================
+
+shutdown_event = asyncio.Event()
+
+def signal_handler():
+    """Manejador de señales para shutdown limpio"""
+    logger.info("Señal de apagado recibida")
+    shutdown_event.set()
+
 # ==================== FUNCIÓN PRINCIPAL ====================
 
 async def run_bot():
-    """Ejecuta el bot de Telegram"""
+    """Ejecuta el bot de Telegram - VERSIÓN CORREGIDA"""
     try:
         logger.info("🚀 Iniciando bot de Telegram...")
         
@@ -476,7 +471,7 @@ async def run_bot():
             subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
             logger.info("✅ FFmpeg encontrado")
         except Exception:
-            logger.error("❌ FFmpeg no encontrado. El bot necesita FFmpeg instalado.")
+            logger.error("❌ FFmpeg no encontrado.")
             return
         
         # Iniciar Pyrogram
@@ -488,35 +483,38 @@ async def run_bot():
         logger.info(f"🆔 ID: {me.id}")
         logger.info("🤖 Bot listo para recibir mensajes")
         
-        # Mantener el bot activo
-        stop_event = asyncio.Event()
-        await stop_event.wait()
+        # ✅✅✅ CORRECCIÓN CRÍTICA: Usar shutdown_event en lugar de Event().wait()
+        # Esto mantiene el bot activo PERO permite que Pyrogram procese mensajes
+        await shutdown_event.wait()
         
+        logger.info("👋 Apagando bot...")
+            
     except Exception as e:
-        logger.error(f"❌ Error crítico en bot: {e}")
-        raise
+        logger.error(f"❌ Error en bot: {e}")
     finally:
         # Limpiar al salir
         if app.is_connected:
             await app.stop()
-        logger.info("👋 Bot detenido")
+        logger.info("Bot detenido")
 
 async def main():
-    """Función principal que ejecuta todo"""
+    """Función principal"""
+    # Configurar manejo de señales
+    loop = asyncio.get_event_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, signal_handler)
+    
     # Iniciar web server en hilo separado
     web_thread = threading.Thread(target=run_web_server, daemon=True)
     web_thread.start()
-    logger.info("🌐 Web server iniciado en puerto 8080")
-    
-    # Esperar un momento para que el web server inicie
-    await asyncio.sleep(2)
+    logger.info("🌐 Servidor web iniciado")
     
     # Iniciar el bot
     await run_bot()
 
 if __name__ == "__main__":
     try:
-        # Ejecutar el bot
+        # ✅ Configuración correcta para Render
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("👋 Bot detenido por el usuario")
