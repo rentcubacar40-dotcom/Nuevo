@@ -10,11 +10,12 @@ RUN apt-get update && apt-get install -y \
 # Establecer directorio de trabajo
 WORKDIR /app
 
-# Copiar archivos de dependencias
+# Copiar dependencias primero (para cache eficiente)
 COPY requirements.txt .
 
 # Instalar dependencias de Python
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copiar código fuente
 COPY . .
@@ -22,10 +23,10 @@ COPY . .
 # Crear directorios necesarios
 RUN mkdir -p workdir compressed logs
 
-# ⚠️ IMPORTANTE: Usar puerto dinámico para Render
+# ✅ Puerto dinámico para Render (CRÍTICO)
 EXPOSE ${PORT:-8080}
 
-# Health check para Render
+# Health check optimizado
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:${PORT:-8080}/ || exit 1
 
