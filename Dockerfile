@@ -22,20 +22,13 @@ COPY . .
 # Crear directorios necesarios
 RUN mkdir -p workdir compressed logs
 
-# Puerto para Render
-EXPOSE 8080
+# ⚠️ CRÍTICO: Exponer el puerto que Render asignará dinámicamente.
+# La variable $PORT se inyectará en tiempo de ejecución.
+EXPOSE ${PORT:-8080}
 
-# Health check para Render
+# Health check: usar el puerto dinámico $PORT, no un puerto fijo.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-  CMD curl -f http://localhost:8080/ || exit 1
+  CMD curl -f http://localhost:${PORT:-8080}/ || exit 1
 
 # Comando de inicio
-CMD ["python", "bot.py"]der (requerido para health checks)
-EXPOSE 8080
-
-# Health check para Render
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD python -c "import socket; s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.settimeout(2); result = s.connect_ex(('localhost', 8080)); s.close(); exit(result == 0)"
-
-# Comando de inicio con gunicorn para mantener el servicio web activo
-CMD ["sh", "-c", "python -m http.server 8080 & python bot.py"]
+CMD ["python", "bot.py"]
