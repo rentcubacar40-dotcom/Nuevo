@@ -3,34 +3,34 @@ FROM python:3.11-slim-bullseye
 # Instalar dependencias del sistema
 RUN apt-get update && apt-get install -y \
     ffmpeg \
-    wget \
-    gnupg \
+    curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Crear usuario no root para seguridad
-RUN useradd -m -u 1000 -s /bin/bash botuser
-USER botuser
-
 # Establecer directorio de trabajo
-WORKDIR /home/botuser/app
+WORKDIR /app
 
 # Copiar archivos de dependencias
-COPY --chown=botuser:botuser requirements.txt .
+COPY requirements.txt .
 
 # Instalar dependencias de Python
-RUN pip install --no-cache-dir --user -r requirements.txt
-
-# Agregar Python user bin al PATH
-ENV PATH="/home/botuser/.local/bin:${PATH}"
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copiar código fuente
-COPY --chown=botuser:botuser . .
+COPY . .
 
 # Crear directorios necesarios
 RUN mkdir -p workdir compressed logs
 
-# Puerto para Render (requerido para health checks)
+# Puerto para Render
+EXPOSE 8080
+
+# Health check para Render
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:8080/ || exit 1
+
+# Comando de inicio
+CMD ["python", "bot.py"]der (requerido para health checks)
 EXPOSE 8080
 
 # Health check para Render
