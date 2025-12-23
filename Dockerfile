@@ -22,11 +22,10 @@ COPY . .
 # Crear directorios necesarios
 RUN mkdir -p workdir compressed logs
 
-# ⚠️ CRÍTICO: Exponer el puerto que Render asignará dinámicamente.
-# La variable $PORT se inyectará en tiempo de ejecución.
+# ⚠️ IMPORTANTE: Usar puerto dinámico para Render
 EXPOSE ${PORT:-8080}
 
-# Health check: usar el puerto dinámico $PORT, no un puerto fijo.
+# Health check para Render
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:${PORT:-8080}/ || exit 1
 
