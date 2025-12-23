@@ -1,7 +1,5 @@
-# =========================
-# ARCHIVO: requirements.txt
-# =========================
-
 pyrogram==2.0.106
-tgcrypto==1.2.5
-flask==3.0.3
+TgCrypto==1.2.5
+psutil==5.9.6
+aiofiles==23.2.1
+asyncio==3.4.3
