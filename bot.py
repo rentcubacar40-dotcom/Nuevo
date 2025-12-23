@@ -489,7 +489,8 @@ async def run_bot():
         logger.info("🤖 Bot listo para recibir mensajes")
         
         # Mantener el bot activo
-        await asyncio.Event().wait()
+        stop_event = asyncio.Event()
+        await stop_event.wait()
         
     except Exception as e:
         logger.error(f"❌ Error crítico en bot: {e}")
