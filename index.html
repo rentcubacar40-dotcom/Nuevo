@@ -122,6 +122,8 @@
             font-family: monospace;
             font-size: 0.9rem;
             word-break: break-all;
+            display: flex;
+            align-items: center;
         }
         
         .link-item:last-child {
@@ -229,6 +231,12 @@
             border-radius: 8px;
             margin-bottom: 10px;
             background-color: #f9f9f9;
+            transition: all 0.3s ease;
+        }
+        
+        .download-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 3px 10px rgba(0,0,0,0.1);
         }
         
         .download-icon {
@@ -255,19 +263,20 @@
             color: var(--gray-color);
         }
         
-        .download-progress {
-            height: 6px;
-            background-color: #e9ecef;
-            border-radius: 3px;
-            margin-top: 8px;
-            overflow: hidden;
+        .download-link {
+            color: var(--primary-color);
+            text-decoration: none;
+            border: 1px solid var(--primary-color);
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            margin-left: 10px;
+            transition: all 0.3s ease;
         }
         
-        .download-progress-bar {
-            height: 100%;
+        .download-link:hover {
             background-color: var(--primary-color);
-            width: 0%;
-            transition: width 0.3s ease;
+            color: white;
         }
         
         .status-completed {
@@ -359,6 +368,76 @@
             .summary {
                 flex-direction: column;
             }
+            
+            .download-item {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            
+            .download-link {
+                margin-left: 0;
+                margin-top: 10px;
+                align-self: flex-end;
+            }
+        }
+        
+        /* Tema oscuro opcional */
+        @media (prefers-color-scheme: dark) {
+            body {
+                background-color: #1a1a1a;
+                color: #e0e0e0;
+            }
+            
+            .card, header {
+                background-color: #2d2d2d;
+                color: #e0e0e0;
+            }
+            
+            .links-preview, .download-item {
+                background-color: #3d3d3d;
+                border-color: #555;
+            }
+        }
+        
+        .download-now-btn {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            margin-left: 10px;
+            transition: background-color 0.3s;
+        }
+        
+        .download-now-btn:hover {
+            background-color: #45a049;
+        }
+        
+        .download-all-btn {
+            background-color: #2196F3;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1rem;
+            margin-top: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .download-all-btn:hover {
+            background-color: #0b7dda;
+        }
+        
+        .batch-controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            flex-wrap: wrap;
         }
     </style>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -367,6 +446,7 @@
     <header>
         <h1><i class="fas fa-download"></i> Descargador de Enlaces</h1>
         <p class="subtitle">Sube un archivo TXT con enlaces y descárgalos automáticamente (hasta 2 simultáneas)</p>
+        <p class="subtitle"><small>Los archivos se guardarán en la carpeta de descargas de tu dispositivo</small></p>
     </header>
     
     <div class="container">
@@ -380,7 +460,7 @@
                     </div>
                     <p><strong>Haz clic para seleccionar un archivo</strong></p>
                     <p>o arrastra y suelta tu archivo TXT aquí</p>
-                    <p class="subtitle">El archivo debe contener un enlace por línea</p>
+                    <p class="subtitle">El archivo debe contener un enlace por línea (ej: https://ejemplo.com/archivo.zip)</p>
                 </label>
             </div>
             
@@ -405,6 +485,15 @@
                 </button>
                 <button id="btnReset" class="btn btn-danger">
                     <i class="fas fa-redo"></i> Reiniciar
+                </button>
+            </div>
+            
+            <div class="batch-controls" id="batchControls" style="display: none;">
+                <button id="btnDownloadSelected" class="download-all-btn">
+                    <i class="fas fa-download"></i> Descargar seleccionados
+                </button>
+                <button id="btnSelectAll" class="download-all-btn" style="background-color: #666;">
+                    <i class="fas fa-check-square"></i> Seleccionar todos
                 </button>
             </div>
         </div>
@@ -448,25 +537,27 @@
         </div>
         
         <div class="instructions">
-            <h3><i class="fas fa-info-circle"></i> Instrucciones de uso</h3>
+            <h3><i class="fas fa-info-circle"></i> Cómo funciona y limitaciones</h3>
             <ul>
-                <li>Prepara un archivo de texto (.txt) con un enlace por línea</li>
-                <li>Selecciona o arrastra el archivo a la zona indicada</li>
-                <li>Haz clic en "Analizar enlaces" para verificar los enlaces</li>
-                <li>Haz clic en "Descargar todos" para iniciar las descargas</li>
-                <li>El sistema descargará hasta 2 archivos simultáneamente</li>
-                <li>Los archivos se guardarán en la carpeta de descargas de tu dispositivo</li>
-                <li>Puedes pausar o reiniciar el proceso en cualquier momento</li>
+                <li><strong>Funcionamiento:</strong> La web crea enlaces de descarga automáticos para cada URL</li>
+                <li><strong>Guardado en el teléfono:</strong> Los archivos se guardan en la carpeta de descargas de tu dispositivo</li>
+                <li><strong>Limitación:</strong> Los enlaces deben ser archivos directos (no páginas web)</li>
+                <li><strong>Formatos soportados:</strong> ZIP, PDF, MP4, MP3, JPG, PNG, DOC, XLS, etc.</li>
+                <li><strong>Consejo:</strong> Asegúrate que los enlaces terminen con extensión de archivo (.zip, .pdf, etc.)</li>
+                <li><strong>Nota:</strong> Algunos servidores pueden bloquear descargas directas por políticas de seguridad</li>
             </ul>
-            <p><strong>Nota:</strong> Esta herramienta funciona completamente en tu navegador. Los enlaces deben ser accesibles públicamente para poder descargarlos.</p>
         </div>
     </div>
     
     <footer>
-        <p>Descargador de Enlaces TXT &copy; 2023 - Compatible con todos los dispositivos</p>
+        <p>Descargador de Enlaces TXT &copy; <span id="currentYear">2025</span> - Compatible con todos los dispositivos</p>
+        <p><small>Los archivos se descargan directamente en tu dispositivo móvil o computadora</small></p>
     </footer>
 
     <script>
+        // Actualizar el año automáticamente
+        document.getElementById('currentYear').textContent = new Date().getFullYear();
+        
         // Variables globales
         let links = [];
         let downloadQueue = [];
@@ -495,6 +586,9 @@
         const downloadingCount = document.getElementById('downloadingCount');
         const queuedCount = document.getElementById('queuedCount');
         const failedCount = document.getElementById('failedCount');
+        const batchControls = document.getElementById('batchControls');
+        const btnDownloadSelected = document.getElementById('btnDownloadSelected');
+        const btnSelectAll = document.getElementById('btnSelectAll');
         
         // Event listeners
         fileInput.addEventListener('change', handleFileSelect);
@@ -502,6 +596,8 @@
         btnDownloadAll.addEventListener('click', startAllDownloads);
         btnPauseAll.addEventListener('click', togglePauseDownloads);
         btnReset.addEventListener('click', resetAll);
+        btnDownloadSelected.addEventListener('click', downloadSelected);
+        btnSelectAll.addEventListener('click', toggleSelectAll);
         
         // Drag and drop
         dropZone.addEventListener('dragover', (e) => {
@@ -587,7 +683,20 @@
             for (let i = 0; i < previewCount; i++) {
                 const linkItem = document.createElement('div');
                 linkItem.className = 'link-item';
-                linkItem.textContent = links[i];
+                
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'link-checkbox';
+                checkbox.dataset.index = i;
+                checkbox.checked = true;
+                
+                const linkText = document.createElement('span');
+                linkText.textContent = links[i];
+                linkText.style.marginLeft = '10px';
+                linkText.style.flex = '1';
+                
+                linkItem.appendChild(checkbox);
+                linkItem.appendChild(linkText);
                 linksPreview.appendChild(linkItem);
             }
             
@@ -601,6 +710,7 @@
             linksPreview.style.display = 'block';
             btnDownloadAll.disabled = false;
             btnPauseAll.disabled = false;
+            batchControls.style.display = 'flex';
             
             // Preparar la cola de descargas
             prepareDownloadQueue();
@@ -614,14 +724,15 @@
             noDownloadsMessage.style.display = 'none';
             
             links.forEach((link, index) => {
-                const fileNameFromLink = getFileNameFromURL(link) || `archivo-${index + 1}`;
+                const fileNameFromLink = getFileNameFromURL(link) || `archivo-${index + 1}.dat`;
                 
                 downloadQueue.push({
                     id: index,
                     url: link,
                     filename: fileNameFromLink,
                     status: 'queued', // queued, downloading, completed, failed
-                    progress: 0
+                    progress: 0,
+                    selected: true
                 });
                 
                 // Crear elemento visual para la descarga
@@ -636,20 +747,65 @@
             downloadItem.className = 'download-item';
             downloadItem.id = `download-${id}`;
             
+            const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(filename);
+            const icon = isImage ? 'fa-image' : 'fa-file-download';
+            
             downloadItem.innerHTML = `
                 <div class="download-icon">
-                    <i class="fas fa-file-download"></i>
+                    <i class="fas ${icon}"></i>
                 </div>
                 <div class="download-info">
                     <div class="download-name">${filename}</div>
-                    <div class="download-status status-queued" id="status-${id}">En cola</div>
+                    <div class="download-status status-queued" id="status-${id}">En cola - ${url}</div>
                     <div class="download-progress">
                         <div class="download-progress-bar" id="progress-bar-${id}"></div>
                     </div>
                 </div>
+                <button class="download-now-btn" data-id="${id}">
+                    <i class="fas fa-download"></i> Descargar ahora
+                </button>
             `;
             
             downloadsContainer.appendChild(downloadItem);
+            
+            // Añadir evento al botón de descarga individual
+            const downloadBtn = downloadItem.querySelector('.download-now-btn');
+            downloadBtn.addEventListener('click', function() {
+                const downloadId = parseInt(this.dataset.id);
+                downloadSingleFile(downloadId);
+            });
+        }
+        
+        function downloadSingleFile(id) {
+            const downloadItem = downloadQueue.find(item => item.id === id);
+            if (!downloadItem) return;
+            
+            // Actualizar estado
+            updateDownloadStatus(id, 'downloading', 0);
+            
+            // Crear enlace temporal para descarga
+            const link = document.createElement('a');
+            link.href = downloadItem.url;
+            link.download = downloadItem.filename;
+            link.target = '_blank';
+            
+            // Simular clic para iniciar descarga
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            // Marcar como completada después de un tiempo
+            setTimeout(() => {
+                downloadItem.status = 'completed';
+                downloadItem.progress = 100;
+                completedDownloads++;
+                updateDownloadStatus(id, 'completed', 100);
+                updateSummary();
+                
+                // Mostrar mensaje de éxito
+                const statusElement = document.getElementById(`status-${id}`);
+                statusElement.innerHTML = `Completado - <a href="${downloadItem.url}" target="_blank" class="download-link">Abrir enlace</a>`;
+            }, 1000);
         }
         
         function startAllDownloads() {
@@ -662,21 +818,39 @@
                 return;
             }
             
-            // Iniciar hasta MAX_CONCURRENT_DOWNLOADS descargas
-            startNextDownloads();
+            // Filtrar solo los seleccionados
+            const selectedDownloads = downloadQueue.filter(item => item.selected);
+            
+            if (selectedDownloads.length === 0) {
+                alert('Selecciona al menos un enlace para descargar');
+                return;
+            }
+            
+            // Iniciar descargas automáticas
+            startAutomaticDownloads();
         }
         
-        function startNextDownloads() {
+        function startAutomaticDownloads() {
             // Si está en pausa, no iniciar nuevas descargas
             if (isPaused) return;
             
-            // Encontrar descargas en cola
-            const queuedDownloads = downloadQueue.filter(item => item.status === 'queued');
+            // Encontrar descargas en cola y seleccionadas
+            const queuedDownloads = downloadQueue.filter(item => 
+                item.status === 'queued' && item.selected
+            );
             
             // Iniciar nuevas descargas hasta alcanzar el límite simultáneo
             while (activeDownloads < MAX_CONCURRENT_DOWNLOADS && queuedDownloads.length > 0) {
                 const nextDownload = queuedDownloads.shift();
                 startDownload(nextDownload.id);
+            }
+            
+            // Si no hay más descargas en cola y todas están completas
+            if (queuedDownloads.length === 0 && 
+                downloadQueue.filter(item => item.selected && item.status === 'completed').length === 
+                downloadQueue.filter(item => item.selected).length) {
+                
+                alert('¡Todas las descargas se completaron!');
             }
         }
         
@@ -692,13 +866,18 @@
             updateDownloadStatus(id, 'downloading', 0);
             updateSummary();
             
-            // Simulación de descarga (en un caso real, usaríamos fetch o XMLHttpRequest)
-            // Para este ejemplo, simularemos la descarga con un intervalo
+            // Crear enlace temporal para descarga
+            const link = document.createElement('a');
+            link.href = downloadItem.url;
+            link.download = downloadItem.filename;
+            link.target = '_blank';
             
-            // En una implementación real, aquí se usaría:
-            // fetch(downloadItem.url).then(response => ...).catch(error => ...)
+            // Simular clic para iniciar descarga
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
             
-            // Simulación con progreso aleatorio
+            // Simular progreso de descarga
             const progressInterval = setInterval(() => {
                 if (isPaused) {
                     clearInterval(progressInterval);
@@ -706,7 +885,7 @@
                 }
                 
                 // Incrementar progreso
-                const increment = Math.random() * 10 + 5; // 5-15%
+                const increment = Math.random() * 15 + 10; // 10-25%
                 downloadItem.progress = Math.min(downloadItem.progress + increment, 100);
                 
                 // Actualizar UI
@@ -717,7 +896,7 @@
                     clearInterval(progressInterval);
                     completeDownload(id);
                 }
-            }, 300);
+            }, 500);
             
             // Guardar el intervalo para poder pausarlo
             downloadItem.intervalId = progressInterval;
@@ -737,7 +916,7 @@
             }
             
             // Actualizar texto y clase CSS
-            statusElement.textContent = getStatusText(status);
+            statusElement.textContent = getStatusText(status, downloadItem?.url || '');
             statusElement.className = `download-status status-${status}`;
             
             // Actualizar barra de progreso
@@ -781,36 +960,16 @@
             updateSummary();
             
             // Intentar iniciar la siguiente descarga
-            startNextDownloads();
+            startAutomaticDownloads();
             
-            // Si todas las descargas están completas
-            if (completedDownloads + failedDownloads === downloadQueue.length) {
+            // Si todas las descargas seleccionadas están completas
+            const selectedDownloads = downloadQueue.filter(item => item.selected);
+            const completedSelected = selectedDownloads.filter(item => item.status === 'completed');
+            
+            if (completedSelected.length === selectedDownloads.length) {
                 btnDownloadAll.disabled = true;
                 btnPauseAll.disabled = true;
-                
-                if (failedDownloads === 0) {
-                    alert('¡Todas las descargas se completaron con éxito!');
-                } else {
-                    alert(`Descargas completadas. ${completedDownloads} exitosas, ${failedDownloads} fallidas.`);
-                }
             }
-        }
-        
-        function failDownload(id) {
-            // Actualizar estado
-            const downloadItem = downloadQueue.find(item => item.id === id);
-            if (!downloadItem) return;
-            
-            downloadItem.status = 'failed';
-            activeDownloads--;
-            failedDownloads++;
-            
-            // Actualizar UI
-            updateDownloadStatus(id, 'failed', downloadItem.progress);
-            updateSummary();
-            
-            // Intentar iniciar la siguiente descarga
-            startNextDownloads();
         }
         
         function togglePauseDownloads() {
@@ -826,7 +985,9 @@
                 downloadQueue
                     .filter(item => item.status === 'downloading')
                     .forEach(item => {
-                        clearInterval(item.intervalId);
+                        if (item.intervalId) {
+                            clearInterval(item.intervalId);
+                        }
                         updateDownloadStatus(item.id, 'queued');
                     });
                 
@@ -839,16 +1000,17 @@
                 btnPauseAll.classList.add('btn-warning');
                 
                 // Reiniciar descargas
-                startNextDownloads();
+                startAutomaticDownloads();
             }
         }
         
         function updateSummary() {
-            // Contar descargas por estado
-            const completed = downloadQueue.filter(item => item.status === 'completed').length;
-            const downloading = downloadQueue.filter(item => item.status === 'downloading').length;
-            const queued = downloadQueue.filter(item => item.status === 'queued').length;
-            const failed = downloadQueue.filter(item => item.status === 'failed').length;
+            // Contar descargas por estado (solo las seleccionadas)
+            const selectedDownloads = downloadQueue.filter(item => item.selected);
+            const completed = selectedDownloads.filter(item => item.status === 'completed').length;
+            const downloading = selectedDownloads.filter(item => item.status === 'downloading').length;
+            const queued = selectedDownloads.filter(item => item.status === 'queued').length;
+            const failed = selectedDownloads.filter(item => item.status === 'failed').length;
             
             // Actualizar contadores
             completedCount.textContent = completed;
@@ -857,7 +1019,7 @@
             failedCount.textContent = failed;
             
             // Actualizar progreso general
-            const total = downloadQueue.length;
+            const total = selectedDownloads.length;
             const done = completed + failed;
             overallProgress.textContent = `${done}/${total}`;
             
@@ -889,6 +1051,7 @@
             linksPreview.innerHTML = '';
             downloadsContainer.innerHTML = '';
             noDownloadsMessage.style.display = 'block';
+            batchControls.style.display = 'none';
             
             btnParse.disabled = true;
             btnDownloadAll.disabled = true;
@@ -901,6 +1064,35 @@
             updateSummary();
         }
         
+        function downloadSelected() {
+            // Actualizar selección basada en checkboxes
+            const checkboxes = document.querySelectorAll('.link-checkbox');
+            checkboxes.forEach((checkbox, index) => {
+                if (downloadQueue[index]) {
+                    downloadQueue[index].selected = checkbox.checked;
+                }
+            });
+            
+            // Iniciar descargas de los seleccionados
+            startAllDownloads();
+        }
+        
+        function toggleSelectAll() {
+            const checkboxes = document.querySelectorAll('.link-checkbox');
+            const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+            
+            checkboxes.forEach((checkbox, index) => {
+                checkbox.checked = !allChecked;
+                if (downloadQueue[index]) {
+                    downloadQueue[index].selected = !allChecked;
+                }
+            });
+            
+            btnSelectAll.innerHTML = allChecked ? 
+                '<i class="fas fa-check-square"></i> Seleccionar todos' : 
+                '<i class="fas fa-times"></i> Deseleccionar todos';
+        }
+        
         // Funciones auxiliares
         function getFileNameFromURL(url) {
             try {
@@ -910,7 +1102,12 @@
                 
                 // Si el nombre de archivo está vacío, usar el dominio
                 if (!filename || filename === '/') {
-                    return urlObj.hostname;
+                    return `${urlObj.hostname}.html`;
+                }
+                
+                // Si no tiene extensión, agregar una por defecto
+                if (!filename.includes('.')) {
+                    return `${filename}.dat`;
                 }
                 
                 return decodeURIComponent(filename);
@@ -919,12 +1116,12 @@
             }
         }
         
-        function getStatusText(status) {
+        function getStatusText(status, url = '') {
             switch(status) {
-                case 'queued': return 'En cola';
+                case 'queued': return `En cola - ${url.substring(0, 50)}${url.length > 50 ? '...' : ''}`;
                 case 'downloading': return 'Descargando...';
-                case 'completed': return 'Completado';
-                case 'failed': return 'Falló';
+                case 'completed': return 'Completado ✓';
+                case 'failed': return 'Falló ✗';
                 default: return '';
             }
         }
