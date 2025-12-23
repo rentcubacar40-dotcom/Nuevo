@@ -1,4 +1,6 @@
-pyrogram[tgcrypto]>=2.0.106
-moviepy>=2.0.0
-pillow>=10.0.0
-python-dotenv>=1.0.0
+# =========================
+# ARCHIVO: requirements.txt
+# =========================
+
+pyrogram==2.0.106
+tgcrypto==1.2.5
