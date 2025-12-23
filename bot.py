@@ -4,60 +4,71 @@
 import os
 import asyncio
 import logging
+import threading
+import sys
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Optional, Tuple
-from datetime import datetime
 
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.enums import ParseMode
 
+# ==================== CONFIGURACIÓN ====================
+# ⚠️ REEMPLAZA ESTOS VALORES ⚠️
+
+API_ID = 20534584  # Tu API ID
+API_HASH = "6d5b13261d2c92a9a00afc1fd613b9df"  # Tu API Hash
+BOT_TOKEN = "8562042457:AAGA__pfWDMVfdslzqwnoFl4yLrAre-HJ5I"  # Token del bot
+ADMIN_USER_ID = 7363341763  # Tu ID de usuario
+
+MAX_FILE_SIZE = 4 * 1024 * 1024 * 1024  # 4GB
+# =======================================================
+
 # Configuración de logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('bot.log')
+    ]
 )
 logger = logging.getLogger(__name__)
 
-# ==================== CONFIGURACIÓN ====================
-# Variables de configuración (cámbialas por tus valores)
-API_ID = 20534584  # Tu API ID de my.telegram.org
-API_HASH = "6d5b13261d2c92a9a00afc1fd613b9df"  # Tu API Hash
-BOT_TOKEN = "8562042457:AAGA__pfWDMVfdslzqwnoFl4yLrAre-HJ5I"  # Token del bot de @BotFather
-MAX_FILE_SIZE = 4 * 1024 * 1024 * 1024  # 4GB en bytes
-ADMIN_USER_ID = 7363341763  # Tu ID de usuario de Telegram
+# ==================== WEB SERVER PARA RENDER ====================
 
-# Configuración de compresión
-SUPPORTED_FORMATS = ['.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.m4v', '.3gp']
-COMPRESSION_PRESETS = {
-    'alta': '-crf 28 -preset fast',
-    'media': '-crf 23 -preset medium',
-    'baja': '-crf 18 -preset slow'
-}
-# ========================================================
+class HealthHandler(BaseHTTPRequestHandler):
+    """Handler simple para health checks de Render"""
+    def do_GET(self):
+        if self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'Bot is alive')
+            logger.info("Health check received")
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def log_message(self, format, *args):
+        # Reducir logs del servidor HTTP
+        logger.debug("HTTP: %s", args[0] if args else "")
 
-# Inicializar cliente Pyrogram
-app = Client(
-    "video_compressor_bot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    workers=4,
-    sleep_threshold=60,
-    max_concurrent_transmissions=2
-)
+def run_web_server():
+    """Ejecuta servidor HTTP en puerto 8080 para Render"""
+    port = int(os.environ.get('PORT', 8080))
+    server = HTTPServer(('0.0.0.0', port), HealthHandler)
+    logger.info(f"✅ Web server running on port {port}")
+    server.serve_forever()
 
-# Directorios de trabajo
-WORK_DIR = "workdir"
-COMPRESSED_DIR = "compressed"
-os.makedirs(WORK_DIR, exist_ok=True)
-os.makedirs(COMPRESSED_DIR, exist_ok=True)
+# ==================== CLASE COMPRESOR ====================
 
 class VideoCompressor:
     def __init__(self):
         self.processing = {}
     
     async def get_video_info(self, input_path: str) -> Optional[dict]:
-        """Obtiene información del video usando ffprobe"""
+        """Obtiene información del video"""
         try:
             import subprocess
             import json
@@ -77,36 +88,34 @@ class VideoCompressor:
             info = json.loads(result.stdout)
             video_info = {}
             
-            # Buscar stream de video
             for stream in info.get('streams', []):
                 if stream.get('codec_type') == 'video':
                     video_info['duration'] = float(stream.get('duration', 0))
                     video_info['width'] = stream.get('width', 0)
                     video_info['height'] = stream.get('height', 0)
                     video_info['codec'] = stream.get('codec_name', 'unknown')
-                    video_info['bitrate'] = stream.get('bit_rate', '0')
                     break
             
             video_info['size'] = os.path.getsize(input_path)
-            video_info['format'] = info.get('format', {}).get('format_name', 'unknown')
-            
             return video_info
         except Exception as e:
-            logger.error(f"Error al obtener info del video: {e}")
+            logger.error(f"Error al obtener info: {e}")
             return None
     
-    async def compress_video(self, input_path: str, output_path: str, 
-                           quality: str = 'media') -> Tuple[bool, str]:
-        """Comprime el video usando FFmpeg"""
+    async def compress_video(self, input_path: str, output_path: str, quality: str = 'medium') -> Tuple[bool, str]:
+        """Comprime el video"""
         try:
             import subprocess
             
-            if quality not in COMPRESSION_PRESETS:
-                quality = 'media'
+            # Presets de compresión
+            presets = {
+                'high': '-crf 28 -preset fast',
+                'medium': '-crf 23 -preset medium', 
+                'low': '-crf 18 -preset slow'
+            }
             
-            preset = COMPRESSION_PRESETS[quality]
+            preset = presets.get(quality, presets['medium'])
             
-            # Comando de compresión optimizado
             cmd = [
                 'ffmpeg', '-i', input_path,
                 '-c:v', 'libx264',
@@ -114,9 +123,11 @@ class VideoCompressor:
                 '-c:a', 'aac',
                 '-b:a', '128k',
                 '-movflags', '+faststart',
-                '-y',  # Sobrescribir archivo si existe
+                '-y',
                 output_path
             ]
+            
+            logger.info(f"Compressing with command: {' '.join(cmd)}")
             
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -129,22 +140,29 @@ class VideoCompressor:
             if process.returncode == 0:
                 original_size = os.path.getsize(input_path)
                 compressed_size = os.path.getsize(output_path)
-                compression_ratio = ((original_size - compressed_size) / original_size) * 100
+                if original_size > 0:
+                    compression_ratio = ((original_size - compressed_size) / original_size) * 100
+                else:
+                    compression_ratio = 0
                 
-                return True, f"✅ Compresión exitosa\n\n" \
-                           f"📊 **Resultados:**\n" \
-                           f"• Tamaño original: {self.format_size(original_size)}\n" \
-                           f"• Tamaño comprimido: {self.format_size(compressed_size)}\n" \
-                           f"• Reducción: {compression_ratio:.1f}%"
+                return True, (
+                    f"✅ **Compresión completada**\n\n"
+                    f"📊 **Resultados:**\n"
+                    f"• Original: {self.format_size(original_size)}\n"
+                    f"• Comprimido: {self.format_size(compressed_size)}\n"
+                    f"• Reducción: {compression_ratio:.1f}%\n"
+                    f"• Calidad: {quality.capitalize()}"
+                )
             else:
-                return False, f"❌ Error en la compresión:\n{stderr.decode()}"
+                error_msg = stderr.decode()[:500]  # Limitar tamaño del error
+                return False, f"❌ Error en compresión:\n```\n{error_msg}\n```"
                 
         except Exception as e:
-            logger.error(f"Error en compresión: {e}")
+            logger.error(f"Error: {e}")
             return False, f"❌ Error: {str(e)}"
     
     def format_size(self, size_bytes: int) -> str:
-        """Formatea el tamaño en bytes a formato legible"""
+        """Formatea tamaño en bytes"""
         for unit in ['B', 'KB', 'MB', 'GB']:
             if size_bytes < 1024.0:
                 return f"{size_bytes:.2f} {unit}"
@@ -157,10 +175,31 @@ class VideoCompressor:
             try:
                 if os.path.exists(file_path):
                     os.remove(file_path)
+                    logger.debug(f"Cleaned up: {file_path}")
             except Exception as e:
-                logger.error(f"Error limpiando archivo {file_path}: {e}")
+                logger.error(f"Error limpiando {file_path}: {e}")
 
+# ==================== INICIALIZACIÓN ====================
+
+# Directorios
+WORK_DIR = "workdir"
+COMPRESSED_DIR = "compressed"
+os.makedirs(WORK_DIR, exist_ok=True)
+os.makedirs(COMPRESSED_DIR, exist_ok=True)
+
+# Inicializar compresor
 compressor = VideoCompressor()
+
+# Inicializar Pyrogram Client
+app = Client(
+    "video_compressor_bot",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN,
+    workers=2,
+    sleep_threshold=60,
+    in_memory=True
+)
 
 # ==================== HANDLERS ====================
 
@@ -170,172 +209,157 @@ async def start_command(client: Client, message: Message):
     welcome_text = """
 🤖 **Video Compressor Bot** 🎬
 
-¡Hola! Soy un bot especializado en comprimir videos manteniendo buena calidad.
+¡Hola! Comprimo videos manteniendo buena calidad.
 
 **📋 Características:**
-• Comprime videos hasta **4GB**
-• Soporta múltiples formatos
+• Videos hasta **4GB**
+• Formatos: MP4, AVI, MOV, MKV, etc.
 • 3 niveles de compresión
-• Mantiene calidad de audio
+• Audio de calidad
 
-**⚡ Comandos disponibles:**
-/start - Mostrar este mensaje
-/help - Mostrar ayuda
-/compress - Comprimir un video
-/stats - Ver estadísticas del bot
+**⚡ Comandos:**
+/start - Este mensaje
+/status - Estado del bot
+/compress - Instrucciones
 
-**📤 Cómo usar:**
-1. Envíame un video (hasta 4GB)
-2. Elige el nivel de compresión
+**📤 Para usar:**
+1. Envíame un video
+2. Elige nivel de compresión
 3. Espera el procesamiento
 4. Recibe tu video comprimido
-
-**📝 Formato soportados:** MP4, AVI, MOV, MKV, FLV, WMV, WEBM, M4V, 3GP
 """
     
     await message.reply_text(
         welcome_text,
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📤 Comprimir Video", callback_data="compress_info")]
+            [InlineKeyboardButton("📤 Comenzar", callback_data="start_compress")]
         ])
     )
 
-@app.on_message(filters.command("compress"))
-async def compress_command(client: Client, message: Message):
-    """Instrucciones para comprimir"""
-    await message.reply_text(
-        "📤 **Para comprimir un video:**\n\n"
-        "1. Envíame el video que deseas comprimir\n"
-        "2. Elige el nivel de compresión cuando te lo pida\n"
-        "3. Espera mientras proceso el video\n"
-        "4. Recibirás el video comprimido\n\n"
-        "📊 **Niveles de compresión:**\n"
-        "• **Alta** - Máxima compresión\n"
-        "• **Media** - Balance calidad/tamaño\n"
-        "• **Baja** - Máxima calidad",
-        parse_mode=ParseMode.MARKDOWN
-    )
-
-@app.on_message(filters.command("stats"))
-async def stats_command(client: Client, message: Message):
-    """Estadísticas del bot"""
-    if message.from_user.id != ADMIN_USER_ID:
-        await message.reply_text("❌ Solo el administrador puede ver las estadísticas.")
-        return
-    
+@app.on_message(filters.command("status"))
+async def status_command(client: Client, message: Message):
+    """Estado del bot"""
     import psutil
     import shutil
     
-    disk_usage = shutil.disk_usage("/")
-    memory = psutil.virtual_memory()
+    disk = shutil.disk_usage("/")
+    mem = psutil.virtual_memory()
     
-    stats_text = f"""
-📊 **Estadísticas del Bot**
+    status_text = f"""
+📊 **Estado del Bot**
 
-**💾 Uso de disco:**
-• Total: {compressor.format_size(disk_usage.total)}
-• Usado: {compressor.format_size(disk_usage.used)}
-• Libre: {compressor.format_size(disk_usage.free)}
+**Sistema:**
+• CPU: {psutil.cpu_percent()}%
+• Memoria: {compressor.format_size(mem.used)} / {compressor.format_size(mem.total)}
+• Disco: {compressor.format_size(disk.used)} / {compressor.format_size(disk.total)}
 
-**🧠 Memoria:**
-• Total: {compressor.format_size(memory.total)}
-• Usado: {compressor.format_size(memory.used)}
-• Libre: {compressor.format_size(memory.available)}
-
-**📈 Archivos temporales:**
-• Directorio de trabajo: {len(os.listdir(WORK_DIR))} archivos
+**Bot:**
+• Usuarios procesando: {len(compressor.processing)}
+• Estado: ✅ Operativo
+• Web server: ✅ Activo (puerto 8080)
 """
     
-    await message.reply_text(stats_text, parse_mode=ParseMode.MARKDOWN)
+    await message.reply_text(status_text, parse_mode=ParseMode.MARKDOWN)
+
+@app.on_message(filters.command("compress"))
+async def compress_info(client: Client, message: Message):
+    """Información sobre compresión"""
+    await message.reply_text(
+        "📤 **Para comprimir:**\n\n"
+        "Simplemente envíame un video y te mostraré las opciones de compresión.\n\n"
+        "📊 **Niveles disponibles:**\n"
+        "• **Alta** - Máxima compresión\n"
+        "• **Media** - Balance calidad/tamaño (recomendado)\n"
+        "• **Baja** - Máxima calidad\n\n"
+        "💡 **Consejo:** Para la mayoría de casos usa **Media**.",
+        parse_mode=ParseMode.MARKDOWN
+    )
 
 @app.on_message(filters.video | filters.document)
-async def handle_video(client: Client, message: Message):
-    """Maneja videos enviados al bot"""
+async def handle_media(client: Client, message: Message):
+    """Maneja videos enviados"""
+    user_id = message.from_user.id
+    
     try:
-        user_id = message.from_user.id
-        
-        # Verificar si el usuario ya está procesando un video
+        # Verificar si ya está procesando
         if user_id in compressor.processing:
             await message.reply_text("⏳ Ya tienes un video en proceso. Espera a que termine.")
             return
         
-        # Obtener información del archivo
+        # Obtener archivo
         if message.video:
             file = message.video
             file_name = file.file_name or f"video_{message.id}.mp4"
         else:
             file = message.document
-            file_name = file.file_name
+            file_name = file.file_name or f"file_{message.id}"
             
-            # Verificar formato soportado
-            file_ext = os.path.splitext(file_name.lower())[1]
-            if file_ext not in SUPPORTED_FORMATS:
+            # Verificar extensión
+            ext = os.path.splitext(file_name.lower())[1]
+            supported = ['.mp4', '.avi', '.mov', '.mkv', '.flv', '.webm']
+            if ext not in supported:
                 await message.reply_text(
-                    f"❌ Formato no soportado. Formatos aceptados:\n" +
-                    ", ".join(SUPPORTED_FORMATS)
+                    f"❌ Formato no soportado. Usa: {', '.join(supported)}"
                 )
                 return
         
-        # Verificar tamaño del archivo
+        # Verificar tamaño
         if file.file_size > MAX_FILE_SIZE:
             await message.reply_text(
-                f"❌ El archivo es demasiado grande. "
-                f"Máximo permitido: {compressor.format_size(MAX_FILE_SIZE)}"
+                f"❌ Muy grande. Máximo: {compressor.format_size(MAX_FILE_SIZE)}"
             )
             return
         
-        # Marcar usuario como procesando
+        # Marcar como procesando
         compressor.processing[user_id] = True
         
         # Informar al usuario
         status_msg = await message.reply_text(
-            "📥 **Descargando video...**\n"
-            f"📝 Nombre: `{file_name}`\n"
-            f"📦 Tamaño: {compressor.format_size(file.file_size)}",
+            f"📥 **Descargando...**\n`{file_name}`\n"
+            f"📦 {compressor.format_size(file.file_size)}",
             parse_mode=ParseMode.MARKDOWN
         )
         
-        # Descargar el video
+        # Descargar
         input_path = os.path.join(WORK_DIR, f"input_{user_id}_{message.id}")
         
         await client.download_media(
             message,
-            file_name=input_path,
-            progress=self.progress_callback,
-            progress_args=(status_msg, "descargando")
+            file_name=input_path
         )
         
-        # Obtener información del video
-        await status_msg.edit_text("📊 **Analizando video...**")
+        # Analizar video
+        await status_msg.edit_text("📊 Analizando video...")
         video_info = await compressor.get_video_info(input_path)
         
         if not video_info:
-            await status_msg.edit_text("❌ No se pudo analizar el video.")
+            await status_msg.edit_text("❌ Error al analizar el video.")
             del compressor.processing[user_id]
             compressor.cleanup_files(input_path)
             return
         
-        # Mostrar información y opciones de compresión
+        # Mostrar opciones
         info_text = f"""
-🎬 **Video Analizado**
+🎬 **Video listo para comprimir**
 
 📝 **Información:**
-• Duración: {int(video_info['duration'] // 60)}:{(video_info['duration'] % 60):02.0f}
-• Resolución: {video_info['width']}x{video_info['height']}
-• Codec: {video_info['codec']}
-• Tamaño: {compressor.format_size(video_info['size'])}
+• Duración: {int(video_info.get('duration', 0) // 60)}:{int(video_info.get('duration', 0) % 60):02d}
+• Resolución: {video_info.get('width', 0)}x{video_info.get('height', 0)}
+• Tamaño: {compressor.format_size(video_info.get('size', 0))}
 
-🔧 **Selecciona nivel de compresión:**
+🔧 **Elige nivel de compresión:**
 """
         
         keyboard = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("🟢 Alta", callback_data=f"compress_{user_id}_alta"),
-                InlineKeyboardButton("🟡 Media", callback_data=f"compress_{user_id}_media"),
-                InlineKeyboardButton("🔴 Baja", callback_data=f"compress_{user_id}_baja")
+                InlineKeyboardButton("🟢 Alta", callback_data=f"compress_{user_id}_high"),
+                InlineKeyboardButton("🟡 Media", callback_data=f"compress_{user_id}_medium"),
             ],
-            [InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel_{user_id}")]
+            [
+                InlineKeyboardButton("🔴 Baja", callback_data=f"compress_{user_id}_low"),
+                InlineKeyboardButton("❌ Cancelar", callback_data=f"cancel_{user_id}")
+            ]
         ])
         
         await status_msg.edit_text(
@@ -345,14 +369,14 @@ async def handle_video(client: Client, message: Message):
         )
         
     except Exception as e:
-        logger.error(f"Error manejando video: {e}")
+        logger.error(f"Error en handle_media: {e}")
         if user_id in compressor.processing:
             del compressor.processing[user_id]
-        await message.reply_text(f"❌ Error: {str(e)}")
+        await message.reply_text(f"❌ Error: {str(e)[:200]}")
 
 @app.on_callback_query()
 async def handle_callback(client: Client, callback_query):
-    """Maneja callbacks de los botones"""
+    """Maneja callbacks"""
     try:
         data = callback_query.data
         user_id = callback_query.from_user.id
@@ -362,151 +386,139 @@ async def handle_callback(client: Client, callback_query):
             callback_user_id = int(callback_user_id)
             
             if user_id != callback_user_id:
-                await callback_query.answer("❌ Este menú no es para ti.", show_alert=True)
+                await callback_query.answer("Este menú no es para ti", show_alert=True)
                 return
             
-            await callback_query.message.edit_text(f"⚙️ **Comprimiendo con calidad {quality}...**")
+            await callback_query.answer(f"Comprimiendo con calidad {quality}...")
+            await callback_query.message.edit_text(f"⚙️ Comprimiendo ({quality})...")
             
-            # Encontrar el archivo de entrada
-            input_pattern = f"input_{user_id}_*"
+            # Buscar archivo
             import glob
-            input_files = glob.glob(os.path.join(WORK_DIR, input_pattern))
+            input_files = glob.glob(os.path.join(WORK_DIR, f"input_{user_id}_*"))
             
             if not input_files:
-                await callback_query.message.edit_text("❌ No se encontró el archivo original.")
-                del compressor.processing[user_id]
+                await callback_query.message.edit_text("❌ Archivo no encontrado")
+                if user_id in compressor.processing:
+                    del compressor.processing[user_id]
                 return
             
             input_path = input_files[0]
             output_path = os.path.join(COMPRESSED_DIR, f"compressed_{user_id}_{quality}.mp4")
             
-            # Comprimir video
+            # Comprimir
             success, result_text = await compressor.compress_video(input_path, output_path, quality)
             
             if success:
-                # Enviar video comprimido
-                await callback_query.message.edit_text("📤 **Enviando video comprimido...**")
+                # Enviar video
+                await callback_query.message.edit_text("📤 Enviando video comprimido...")
                 
                 await client.send_video(
                     chat_id=user_id,
                     video=output_path,
                     caption=result_text,
                     parse_mode=ParseMode.MARKDOWN,
-                    progress=self.progress_callback,
-                    progress_args=(callback_query.message, "enviando")
+                    supports_streaming=True
                 )
                 
                 await callback_query.message.delete()
             else:
-                await callback_query.message.edit_text(result_text)
+                await callback_query.message.edit_text(result_text[:1000])
             
-            # Limpiar archivos
+            # Limpiar
             compressor.cleanup_files(input_path, output_path)
-            del compressor.processing[user_id]
+            if user_id in compressor.processing:
+                del compressor.processing[user_id]
             
         elif data.startswith("cancel_"):
             _, callback_user_id = data.split("_")
             callback_user_id = int(callback_user_id)
             
             if user_id != callback_user_id:
-                await callback_query.answer("❌ Este menú no es para ti.", show_alert=True)
+                await callback_query.answer("Este menú no es para ti", show_alert=True)
                 return
             
             # Limpiar archivos
-            input_pattern = f"input_{user_id}_*"
             import glob
-            input_files = glob.glob(os.path.join(WORK_DIR, input_pattern))
-            
+            input_files = glob.glob(os.path.join(WORK_DIR, f"input_{user_id}_*"))
             for file_path in input_files:
                 compressor.cleanup_files(file_path)
             
             if user_id in compressor.processing:
                 del compressor.processing[user_id]
             
-            await callback_query.message.edit_text("❌ **Compresión cancelada.**")
-            await callback_query.answer("Compresión cancelada")
+            await callback_query.message.edit_text("❌ **Compresión cancelada**")
+            await callback_query.answer("Cancelado")
             
-        elif data == "compress_info":
+        elif data == "start_compress":
             await callback_query.answer()
             await callback_query.message.reply_text(
-                "📤 **Para comprimir un video:**\n\n"
-                "Simplemente envía el video que deseas comprimir y "
-                "selecciona el nivel de compresión que prefieras.",
+                "📤 **Envía un video para comenzar**\n\n"
+                "Puedes enviar cualquier video (hasta 4GB) y yo lo comprimiré.",
                 parse_mode=ParseMode.MARKDOWN
             )
             
     except Exception as e:
         logger.error(f"Error en callback: {e}")
-        await callback_query.message.edit_text(f"❌ Error: {str(e)}")
+        await callback_query.message.edit_text(f"❌ Error: {str(e)[:200]}")
         if user_id in compressor.processing:
             del compressor.processing[user_id]
 
-    async def progress_callback(self, current: int, total: int, message: Message, action: str):
-        """Callback para mostrar progreso de descarga/subida"""
+# ==================== FUNCIÓN PRINCIPAL ====================
+
+async def run_bot():
+    """Ejecuta el bot de Telegram"""
+    try:
+        logger.info("🚀 Iniciando bot de Telegram...")
+        
+        # Verificar FFmpeg
         try:
-            percentage = (current / total) * 100
-            
-            # Actualizar cada 5% o cada 5MB
-            if current % max(5 * 1024 * 1024, total // 20) == 0 or current == total:
-                progress_bar = self.create_progress_bar(percentage)
-                
-                await message.edit_text(
-                    f"⏳ **{action.capitalize()}...**\n"
-                    f"{progress_bar} {percentage:.1f}%\n"
-                    f"📦 {self.format_size(current)} / {self.format_size(total)}",
-                    parse_mode=ParseMode.MARKDOWN
-                )
-        except Exception as e:
-            logger.error(f"Error en progress_callback: {e}")
-
-    def create_progress_bar(self, percentage: float) -> str:
-        """Crea una barra de progreso visual"""
-        bar_length = 10
-        filled_length = int(bar_length * percentage // 100)
-        bar = '█' * filled_length + '░' * (bar_length - filled_length)
-        return f"[{bar}]"
-
-# ==================== MAIN ====================
+            import subprocess
+            subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+            logger.info("✅ FFmpeg encontrado")
+        except Exception:
+            logger.error("❌ FFmpeg no encontrado. El bot necesita FFmpeg instalado.")
+            return
+        
+        # Iniciar Pyrogram
+        await app.start()
+        
+        # Obtener información del bot
+        me = await app.get_me()
+        logger.info(f"✅ Bot iniciado: @{me.username}")
+        logger.info(f"🆔 ID: {me.id}")
+        logger.info("🤖 Bot listo para recibir mensajes")
+        
+        # Mantener el bot activo
+        await asyncio.Event().wait()
+        
+    except Exception as e:
+        logger.error(f"❌ Error crítico en bot: {e}")
+        raise
+    finally:
+        # Limpiar al salir
+        if app.is_connected:
+            await app.stop()
+        logger.info("👋 Bot detenido")
 
 async def main():
-    """Función principal"""
-    logger.info("🚀 Iniciando Video Compressor Bot...")
+    """Función principal que ejecuta todo"""
+    # Iniciar web server en hilo separado
+    web_thread = threading.Thread(target=run_web_server, daemon=True)
+    web_thread.start()
+    logger.info("🌐 Web server iniciado en puerto 8080")
     
-    # Verificar dependencias
-    try:
-        import subprocess
-        # Verificar si FFmpeg está instalado
-        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
-        logger.info("✅ FFmpeg encontrado")
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        logger.error("❌ FFmpeg no encontrado. Instálalo con: apt-get install ffmpeg")
-        return
+    # Esperar un momento para que el web server inicie
+    await asyncio.sleep(2)
     
     # Iniciar el bot
-    await app.start()
-    logger.info("🤖 Bot iniciado correctamente")
-    
-    # Obtener información del bot
-    me = await app.get_me()
-    logger.info(f"✅ Conectado como: @{me.username}")
-    logger.info(f"🆔 ID del bot: {me.id}")
-    
-    # Mantener el bot corriendo
-    await asyncio.Event().wait()
+    await run_bot()
 
 if __name__ == "__main__":
     try:
+        # Ejecutar el bot
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("👋 Bot detenido por el usuario")
     except Exception as e:
-        logger.error(f"❌ Error crítico: {e}")
-    finally:
-        # Limpiar archivos temporales al salir
-        logger.info("🧹 Limpiando archivos temporales...")
-        import shutil
-        if os.path.exists(WORK_DIR):
-            shutil.rmtree(WORK_DIR)
-        if os.path.exists(COMPRESSED_DIR):
-            shutil.rmtree(COMPRESSED_DIR)
-        logger.info("✅ Limpieza completada")
+        logger.error(f"❌ Error fatal: {e}")
+        sys.exit(1)
