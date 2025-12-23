@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Descargador de Enlaces desde TXT</title>
+    <style>
+        :root {
+            --primary-color: #4a6fa5;
+            --secondary-color: #166088;
+            --success-color: #28a745;
+            --warning-color: #ffc107;
+            --danger-color: #dc3545;
+            --light-color: #f8f9fa;
+            --dark-color: #343a40;
+            --gray-color: #6c757d;
+        }
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            background-color: #f5f7fa;
+            color: #333;
+            line-height: 1.6;
+            padding: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        h1 {
+            color: var(--primary-color);
+            margin-bottom: 10px;
+            font-size: 2.2rem;
+        }
+        
+        .subtitle {
+            color: var(--gray-color);
+            font-size: 1.1rem;
+        }
+        
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 25px;
+        }
+        
+        .card {
+            background-color: white;
+            border-radius: 10px;
+            padding: 25px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .card h2 {
+            color: var(--secondary-color);
+            margin-bottom: 15px;
+            font-size: 1.5rem;
+        }
+        
+        .file-upload {
+            border: 2px dashed var(--primary-color);
+            border-radius: 8px;
+            padding: 40px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background-color: #f8fbff;
+            margin-bottom: 20px;
+        }
+        
+        .file-upload:hover {
+            background-color: #eef5ff;
+        }
+        
+        .file-upload.dragover {
+            background-color: #e0ecff;
+            border-color: var(--secondary-color);
+        }
+        
+        .file-input {
+            display: none;
+        }
+        
+        .file-label {
+            display: block;
+            cursor: pointer;
+        }
+        
+        .upload-icon {
+            font-size: 48px;
+            color: var(--primary-color);
+            margin-bottom: 15px;
+        }
+        
+        .links-preview {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            margin-top: 15px;
+        }
+        
+        .link-item {
+            padding: 8px 10px;
+            border-bottom: 1px solid #eee;
+            font-family: monospace;
+            font-size: 0.9rem;
+            word-break: break-all;
+        }
+        
+        .link-item:last-child {
+            border-bottom: none;
+        }
+        
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            flex: 1;
+            min-width: 160px;
+        }
+        
+        .btn-primary {
+            background-color: var(--primary-color);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background-color: var(--secondary-color);
+        }
+        
+        .btn-success {
+            background-color: var(--success-color);
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background-color: #218838;
+        }
+        
+        .btn-warning {
+            background-color: var(--warning-color);
+            color: var(--dark-color);
+        }
+        
+        .btn-warning:hover {
+            background-color: #e0a800;
+        }
+        
+        .btn-danger {
+            background-color: var(--danger-color);
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background-color: #c82333;
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .progress-section {
+            margin-top: 30px;
+        }
+        
+        .progress-info {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        
+        .progress-bar {
+            height: 12px;
+            background-color: #e9ecef;
+            border-radius: 6px;
+            overflow: hidden;
+            margin-bottom: 5px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background-color: var(--success-color);
+            width: 0%;
+            transition: width 0.5s ease;
+        }
+        
+        .downloads-container {
+            margin-top: 25px;
+        }
+        
+        .download-item {
+            display: flex;
+            align-items: center;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            background-color: #f9f9f9;
+        }
+        
+        .download-icon {
+            font-size: 24px;
+            margin-right: 15px;
+            color: var(--primary-color);
+        }
+        
+        .download-info {
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .download-name {
+            font-weight: 600;
+            margin-bottom: 5px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .download-status {
+            font-size: 0.9rem;
+            color: var(--gray-color);
+        }
+        
+        .download-progress {
+            height: 6px;
+            background-color: #e9ecef;
+            border-radius: 3px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+        
+        .download-progress-bar {
+            height: 100%;
+            background-color: var(--primary-color);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        
+        .status-completed {
+            color: var(--success-color);
+        }
+        
+        .status-failed {
+            color: var(--danger-color);
+        }
+        
+        .status-downloading {
+            color: var(--primary-color);
+        }
+        
+        .status-queued {
+            color: var(--gray-color);
+        }
+        
+        .summary {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .summary-item {
+            flex: 1;
+            min-width: 150px;
+            text-align: center;
+            padding: 15px;
+            border-radius: 8px;
+            background-color: #f0f7ff;
+            border: 1px solid #cfe2ff;
+        }
+        
+        .summary-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--primary-color);
+        }
+        
+        .summary-label {
+            font-size: 0.9rem;
+            color: var(--gray-color);
+            margin-top: 5px;
+        }
+        
+        .instructions {
+            margin-top: 30px;
+            padding: 20px;
+            background-color: #fff8e1;
+            border-radius: 8px;
+            border-left: 4px solid var(--warning-color);
+        }
+        
+        .instructions h3 {
+            color: var(--warning-color);
+            margin-bottom: 10px;
+        }
+        
+        .instructions ul {
+            padding-left: 20px;
+        }
+        
+        .instructions li {
+            margin-bottom: 8px;
+        }
+        
+        footer {
+            text-align: center;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #ddd;
+            color: var(--gray-color);
+            font-size: 0.9rem;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .controls {
+                flex-direction: column;
+            }
+            
+            .btn {
+                width: 100%;
+            }
+            
+            .summary {
+                flex-direction: column;
+            }
+        }
+    </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <header>
+        <h1><i class="fas fa-download"></i> Descargador de Enlaces</h1>
+        <p class="subtitle">Sube un archivo TXT con enlaces y descárgalos automáticamente (hasta 2 simultáneas)</p>
+    </header>
+    
+    <div class="container">
+        <div class="card">
+            <h2>1. Seleccionar archivo TXT</h2>
+            <div class="file-upload" id="dropZone">
+                <input type="file" id="fileInput" class="file-input" accept=".txt">
+                <label for="fileInput" class="file-label">
+                    <div class="upload-icon">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                    </div>
+                    <p><strong>Haz clic para seleccionar un archivo</strong></p>
+                    <p>o arrastra y suelta tu archivo TXT aquí</p>
+                    <p class="subtitle">El archivo debe contener un enlace por línea</p>
+                </label>
+            </div>
+            
+            <div id="fileInfo" style="display: none;">
+                <p><strong>Archivo seleccionado:</strong> <span id="fileName"></span></p>
+                <p><strong>Enlaces detectados:</strong> <span id="linksCount">0</span></p>
+                
+                <div id="linksPreview" class="links-preview" style="display: none;">
+                    <!-- Vista previa de enlaces aparecerá aquí -->
+                </div>
+            </div>
+            
+            <div class="controls">
+                <button id="btnParse" class="btn btn-primary" disabled>
+                    <i class="fas fa-search"></i> Analizar enlaces
+                </button>
+                <button id="btnDownloadAll" class="btn btn-success" disabled>
+                    <i class="fas fa-download"></i> Descargar todos
+                </button>
+                <button id="btnPauseAll" class="btn btn-warning" disabled>
+                    <i class="fas fa-pause"></i> Pausar descargas
+                </button>
+                <button id="btnReset" class="btn btn-danger">
+                    <i class="fas fa-redo"></i> Reiniciar
+                </button>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>2. Progreso de descargas</h2>
+            <div class="progress-section">
+                <div class="progress-info">
+                    <span>Progreso general:</span>
+                    <span id="overallProgress">0/0</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="overallProgressBar"></div>
+                </div>
+                <div class="summary">
+                    <div class="summary-item">
+                        <div class="summary-value" id="completedCount">0</div>
+                        <div class="summary-label">Completadas</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value" id="downloadingCount">0</div>
+                        <div class="summary-label">En descarga</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value" id="queuedCount">0</div>
+                        <div class="summary-label">En cola</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-value" id="failedCount">0</div>
+                        <div class="summary-label">Fallidas</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="downloads-container" id="downloadsContainer">
+                <!-- Los elementos de descarga aparecerán aquí -->
+                <p id="noDownloadsMessage" style="text-align: center; color: var(--gray-color); padding: 20px;">
+                    No hay descargas en curso. Sube un archivo TXT y haz clic en "Descargar todos"
+                </p>
+            </div>
+        </div>
+        
+        <div class="instructions">
+            <h3><i class="fas fa-info-circle"></i> Instrucciones de uso</h3>
+            <ul>
+                <li>Prepara un archivo de texto (.txt) con un enlace por línea</li>
+                <li>Selecciona o arrastra el archivo a la zona indicada</li>
+                <li>Haz clic en "Analizar enlaces" para verificar los enlaces</li>
+                <li>Haz clic en "Descargar todos" para iniciar las descargas</li>
+                <li>El sistema descargará hasta 2 archivos simultáneamente</li>
+                <li>Los archivos se guardarán en la carpeta de descargas de tu dispositivo</li>
+                <li>Puedes pausar o reiniciar el proceso en cualquier momento</li>
+            </ul>
+            <p><strong>Nota:</strong> Esta herramienta funciona completamente en tu navegador. Los enlaces deben ser accesibles públicamente para poder descargarlos.</p>
+        </div>
+    </div>
+    
+    <footer>
+        <p>Descargador de Enlaces TXT &copy; 2023 - Compatible con todos los dispositivos</p>
+    </footer>
+
+    <script>
+        // Variables globales
+        let links = [];
+        let downloadQueue = [];
+        let activeDownloads = 0;
+        const MAX_CONCURRENT_DOWNLOADS = 2;
+        let isPaused = false;
+        let completedDownloads = 0;
+        let failedDownloads = 0;
+        
+        // Elementos del DOM
+        const fileInput = document.getElementById('fileInput');
+        const dropZone = document.getElementById('dropZone');
+        const fileInfo = document.getElementById('fileInfo');
+        const fileName = document.getElementById('fileName');
+        const linksCount = document.getElementById('linksCount');
+        const linksPreview = document.getElementById('linksPreview');
+        const btnParse = document.getElementById('btnParse');
+        const btnDownloadAll = document.getElementById('btnDownloadAll');
+        const btnPauseAll = document.getElementById('btnPauseAll');
+        const btnReset = document.getElementById('btnReset');
+        const downloadsContainer = document.getElementById('downloadsContainer');
+        const noDownloadsMessage = document.getElementById('noDownloadsMessage');
+        const overallProgress = document.getElementById('overallProgress');
+        const overallProgressBar = document.getElementById('overallProgressBar');
+        const completedCount = document.getElementById('completedCount');
+        const downloadingCount = document.getElementById('downloadingCount');
+        const queuedCount = document.getElementById('queuedCount');
+        const failedCount = document.getElementById('failedCount');
+        
+        // Event listeners
+        fileInput.addEventListener('change', handleFileSelect);
+        btnParse.addEventListener('click', parseLinks);
+        btnDownloadAll.addEventListener('click', startAllDownloads);
+        btnPauseAll.addEventListener('click', togglePauseDownloads);
+        btnReset.addEventListener('click', resetAll);
+        
+        // Drag and drop
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+        
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            
+            if (e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files;
+                handleFileSelect();
+            }
+        });
+        
+        // Funciones
+        function handleFileSelect() {
+            const file = fileInput.files[0];
+            if (!file) return;
+            
+            // Verificar que sea un archivo .txt
+            if (!file.name.toLowerCase().endsWith('.txt')) {
+                alert('Por favor, selecciona un archivo de texto (.txt)');
+                fileInput.value = '';
+                return;
+            }
+            
+            fileName.textContent = file.name;
+            fileInfo.style.display = 'block';
+            btnParse.disabled = false;
+            
+            // Leer el archivo
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const content = e.target.result;
+                // Extraer enlaces (una por línea)
+                const rawLinks = content.split('\n')
+                    .map(line => line.trim())
+                    .filter(line => line.length > 0);
+                
+                // Mostrar conteo inicial
+                linksCount.textContent = rawLinks.length;
+                
+                // Guardar enlaces en bruto para el análisis posterior
+                window.rawLinks = rawLinks;
+            };
+            reader.readAsText(file);
+        }
+        
+        function parseLinks() {
+            if (!window.rawLinks || window.rawLinks.length === 0) {
+                alert('No se encontraron enlaces en el archivo');
+                return;
+            }
+            
+            // Filtrar solo URLs válidas
+            links = window.rawLinks.filter(link => {
+                try {
+                    new URL(link);
+                    return true;
+                } catch {
+                    return false;
+                }
+            });
+            
+            if (links.length === 0) {
+                alert('No se encontraron URLs válidas en el archivo');
+                return;
+            }
+            
+            // Mostrar información
+            linksCount.textContent = links.length;
+            
+            // Mostrar vista previa de enlaces (máximo 10)
+            linksPreview.innerHTML = '';
+            const previewCount = Math.min(links.length, 10);
+            for (let i = 0; i < previewCount; i++) {
+                const linkItem = document.createElement('div');
+                linkItem.className = 'link-item';
+                linkItem.textContent = links[i];
+                linksPreview.appendChild(linkItem);
+            }
+            
+            if (links.length > 10) {
+                const moreItem = document.createElement('div');
+                moreItem.className = 'link-item';
+                moreItem.textContent = `... y ${links.length - 10} enlaces más`;
+                linksPreview.appendChild(moreItem);
+            }
+            
+            linksPreview.style.display = 'block';
+            btnDownloadAll.disabled = false;
+            btnPauseAll.disabled = false;
+            
+            // Preparar la cola de descargas
+            prepareDownloadQueue();
+            
+            alert(`Se encontraron ${links.length} enlaces válidos. Haz clic en "Descargar todos" para comenzar.`);
+        }
+        
+        function prepareDownloadQueue() {
+            downloadQueue = [];
+            downloadsContainer.innerHTML = '';
+            noDownloadsMessage.style.display = 'none';
+            
+            links.forEach((link, index) => {
+                const fileNameFromLink = getFileNameFromURL(link) || `archivo-${index + 1}`;
+                
+                downloadQueue.push({
+                    id: index,
+                    url: link,
+                    filename: fileNameFromLink,
+                    status: 'queued', // queued, downloading, completed, failed
+                    progress: 0
+                });
+                
+                // Crear elemento visual para la descarga
+                createDownloadElement(index, fileNameFromLink, link);
+            });
+            
+            updateSummary();
+        }
+        
+        function createDownloadElement(id, filename, url) {
+            const downloadItem = document.createElement('div');
+            downloadItem.className = 'download-item';
+            downloadItem.id = `download-${id}`;
+            
+            downloadItem.innerHTML = `
+                <div class="download-icon">
+                    <i class="fas fa-file-download"></i>
+                </div>
+                <div class="download-info">
+                    <div class="download-name">${filename}</div>
+                    <div class="download-status status-queued" id="status-${id}">En cola</div>
+                    <div class="download-progress">
+                        <div class="download-progress-bar" id="progress-bar-${id}"></div>
+                    </div>
+                </div>
+            `;
+            
+            downloadsContainer.appendChild(downloadItem);
+        }
+        
+        function startAllDownloads() {
+            if (isPaused) {
+                togglePauseDownloads();
+            }
+            
+            if (downloadQueue.length === 0) {
+                alert('No hay enlaces para descargar');
+                return;
+            }
+            
+            // Iniciar hasta MAX_CONCURRENT_DOWNLOADS descargas
+            startNextDownloads();
+        }
+        
+        function startNextDownloads() {
+            // Si está en pausa, no iniciar nuevas descargas
+            if (isPaused) return;
+            
+            // Encontrar descargas en cola
+            const queuedDownloads = downloadQueue.filter(item => item.status === 'queued');
+            
+            // Iniciar nuevas descargas hasta alcanzar el límite simultáneo
+            while (activeDownloads < MAX_CONCURRENT_DOWNLOADS && queuedDownloads.length > 0) {
+                const nextDownload = queuedDownloads.shift();
+                startDownload(nextDownload.id);
+            }
+        }
+        
+        function startDownload(id) {
+            const downloadItem = downloadQueue.find(item => item.id === id);
+            if (!downloadItem) return;
+            
+            // Actualizar estado
+            downloadItem.status = 'downloading';
+            activeDownloads++;
+            
+            // Actualizar UI
+            updateDownloadStatus(id, 'downloading', 0);
+            updateSummary();
+            
+            // Simulación de descarga (en un caso real, usaríamos fetch o XMLHttpRequest)
+            // Para este ejemplo, simularemos la descarga con un intervalo
+            
+            // En una implementación real, aquí se usaría:
+            // fetch(downloadItem.url).then(response => ...).catch(error => ...)
+            
+            // Simulación con progreso aleatorio
+            const progressInterval = setInterval(() => {
+                if (isPaused) {
+                    clearInterval(progressInterval);
+                    return;
+                }
+                
+                // Incrementar progreso
+                const increment = Math.random() * 10 + 5; // 5-15%
+                downloadItem.progress = Math.min(downloadItem.progress + increment, 100);
+                
+                // Actualizar UI
+                updateDownloadProgress(id, downloadItem.progress);
+                
+                // Si la descarga está completa
+                if (downloadItem.progress >= 100) {
+                    clearInterval(progressInterval);
+                    completeDownload(id);
+                }
+            }, 300);
+            
+            // Guardar el intervalo para poder pausarlo
+            downloadItem.intervalId = progressInterval;
+        }
+        
+        function updateDownloadStatus(id, status, progress = null) {
+            const statusElement = document.getElementById(`status-${id}`);
+            const progressBar = document.getElementById(`progress-bar-${id}`);
+            
+            // Actualizar estado
+            const downloadItem = downloadQueue.find(item => item.id === id);
+            if (downloadItem) {
+                downloadItem.status = status;
+                if (progress !== null) {
+                    downloadItem.progress = progress;
+                }
+            }
+            
+            // Actualizar texto y clase CSS
+            statusElement.textContent = getStatusText(status);
+            statusElement.className = `download-status status-${status}`;
+            
+            // Actualizar barra de progreso
+            if (progress !== null) {
+                progressBar.style.width = `${progress}%`;
+            }
+            
+            // Actualizar icono si está completado o falló
+            const iconElement = document.querySelector(`#download-${id} .download-icon i`);
+            if (status === 'completed') {
+                iconElement.className = 'fas fa-check-circle';
+                iconElement.style.color = '#28a745';
+            } else if (status === 'failed') {
+                iconElement.className = 'fas fa-exclamation-circle';
+                iconElement.style.color = '#dc3545';
+            }
+        }
+        
+        function updateDownloadProgress(id, progress) {
+            const progressBar = document.getElementById(`progress-bar-${id}`);
+            progressBar.style.width = `${progress}%`;
+            
+            // Actualizar en el array
+            const downloadItem = downloadQueue.find(item => item.id === id);
+            if (downloadItem) {
+                downloadItem.progress = progress;
+            }
+        }
+        
+        function completeDownload(id) {
+            // Actualizar estado
+            const downloadItem = downloadQueue.find(item => item.id === id);
+            if (!downloadItem) return;
+            
+            downloadItem.status = 'completed';
+            activeDownloads--;
+            completedDownloads++;
+            
+            // Actualizar UI
+            updateDownloadStatus(id, 'completed', 100);
+            updateSummary();
+            
+            // Intentar iniciar la siguiente descarga
+            startNextDownloads();
+            
+            // Si todas las descargas están completas
+            if (completedDownloads + failedDownloads === downloadQueue.length) {
+                btnDownloadAll.disabled = true;
+                btnPauseAll.disabled = true;
+                
+                if (failedDownloads === 0) {
+                    alert('¡Todas las descargas se completaron con éxito!');
+                } else {
+                    alert(`Descargas completadas. ${completedDownloads} exitosas, ${failedDownloads} fallidas.`);
+                }
+            }
+        }
+        
+        function failDownload(id) {
+            // Actualizar estado
+            const downloadItem = downloadQueue.find(item => item.id === id);
+            if (!downloadItem) return;
+            
+            downloadItem.status = 'failed';
+            activeDownloads--;
+            failedDownloads++;
+            
+            // Actualizar UI
+            updateDownloadStatus(id, 'failed', downloadItem.progress);
+            updateSummary();
+            
+            // Intentar iniciar la siguiente descarga
+            startNextDownloads();
+        }
+        
+        function togglePauseDownloads() {
+            isPaused = !isPaused;
+            
+            if (isPaused) {
+                // Pausar todas las descargas activas
+                btnPauseAll.innerHTML = '<i class="fas fa-play"></i> Reanudar descargas';
+                btnPauseAll.classList.remove('btn-warning');
+                btnPauseAll.classList.add('btn-success');
+                
+                // Actualizar estado de descargas activas a "pausadas"
+                downloadQueue
+                    .filter(item => item.status === 'downloading')
+                    .forEach(item => {
+                        clearInterval(item.intervalId);
+                        updateDownloadStatus(item.id, 'queued');
+                    });
+                
+                activeDownloads = 0;
+                updateSummary();
+            } else {
+                // Reanudar descargas
+                btnPauseAll.innerHTML = '<i class="fas fa-pause"></i> Pausar descargas';
+                btnPauseAll.classList.remove('btn-success');
+                btnPauseAll.classList.add('btn-warning');
+                
+                // Reiniciar descargas
+                startNextDownloads();
+            }
+        }
+        
+        function updateSummary() {
+            // Contar descargas por estado
+            const completed = downloadQueue.filter(item => item.status === 'completed').length;
+            const downloading = downloadQueue.filter(item => item.status === 'downloading').length;
+            const queued = downloadQueue.filter(item => item.status === 'queued').length;
+            const failed = downloadQueue.filter(item => item.status === 'failed').length;
+            
+            // Actualizar contadores
+            completedCount.textContent = completed;
+            downloadingCount.textContent = downloading;
+            queuedCount.textContent = queued;
+            failedCount.textContent = failed;
+            
+            // Actualizar progreso general
+            const total = downloadQueue.length;
+            const done = completed + failed;
+            overallProgress.textContent = `${done}/${total}`;
+            
+            // Actualizar barra de progreso general
+            const progressPercent = total > 0 ? (done / total) * 100 : 0;
+            overallProgressBar.style.width = `${progressPercent}%`;
+        }
+        
+        function resetAll() {
+            // Detener todas las descargas
+            downloadQueue.forEach(item => {
+                if (item.intervalId) {
+                    clearInterval(item.intervalId);
+                }
+            });
+            
+            // Reiniciar variables
+            links = [];
+            downloadQueue = [];
+            activeDownloads = 0;
+            isPaused = false;
+            completedDownloads = 0;
+            failedDownloads = 0;
+            
+            // Reiniciar UI
+            fileInput.value = '';
+            fileInfo.style.display = 'none';
+            linksPreview.style.display = 'none';
+            linksPreview.innerHTML = '';
+            downloadsContainer.innerHTML = '';
+            noDownloadsMessage.style.display = 'block';
+            
+            btnParse.disabled = true;
+            btnDownloadAll.disabled = true;
+            btnPauseAll.disabled = true;
+            
+            btnPauseAll.innerHTML = '<i class="fas fa-pause"></i> Pausar descargas';
+            btnPauseAll.classList.remove('btn-success');
+            btnPauseAll.classList.add('btn-warning');
+            
+            updateSummary();
+        }
+        
+        // Funciones auxiliares
+        function getFileNameFromURL(url) {
+            try {
+                const urlObj = new URL(url);
+                const pathname = urlObj.pathname;
+                const filename = pathname.substring(pathname.lastIndexOf('/') + 1);
+                
+                // Si el nombre de archivo está vacío, usar el dominio
+                if (!filename || filename === '/') {
+                    return urlObj.hostname;
+                }
+                
+                return decodeURIComponent(filename);
+            } catch {
+                return null;
+            }
+        }
+        
+        function getStatusText(status) {
+            switch(status) {
+                case 'queued': return 'En cola';
+                case 'downloading': return 'Descargando...';
+                case 'completed': return 'Completado';
+                case 'failed': return 'Falló';
+                default: return '';
+            }
+        }
+        
+        // Inicializar
+        updateSummary();
+    </script>
+</body>
+</html>
