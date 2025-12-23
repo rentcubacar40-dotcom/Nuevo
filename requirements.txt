@@ -1,4 +1,4 @@
-pyrogram[tgcrypto]
-moviepy
-pillow
-python-dotenv
+pyrogram[tgcrypto]>=2.0.106
+moviepy>=2.0.0
+pillow>=10.0.0
+python-dotenv>=1.0.0
