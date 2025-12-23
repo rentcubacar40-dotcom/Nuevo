@@ -1,6 +1,7 @@
-#!/bin/bash
-
+mkdir server
 mkdir -p /tmp/video_bot
+python3 -m http.server -d server &
+python3 bot.py
 
 echo "Iniciando Bot de Compresión de Videos..."
 
@@ -19,9 +20,3 @@ fi
 
 echo "✅ Verificaciones completadas"
 echo "🚀 Iniciando el bot..."
-
-# Iniciar el servidor web simple en segundo plano
-python3 -m http.server 8080 &
-
-# Iniciar el bot principal
-python3 bot.py
