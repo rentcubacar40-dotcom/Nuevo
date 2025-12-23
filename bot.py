@@ -1,1254 +1,949 @@
-import os
-import subprocess
-import json
-import re
-import time
-import logging
-import threading
-import uuid
-import asyncio
-from collections import deque
-from pathlib import Path
+"""
+🎬 Video Compression Bot Pro
+Bot profesional de compresión de videos con soporte para archivos de hasta 4GB
+Web Service integrado con Flask para Render
+"""
 
-from pyrogram import Client, filters
+import os
+import sys
+import asyncio
+import logging
+import json
+import time
+import uuid
+import shutil
+import subprocess
+import threading
+from pathlib import Path
+from datetime import datetime
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+
+# Importaciones principales
+from pyrogram import Client, filters, idle
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.enums import ParseMode, MessageMediaType
+from flask import Flask, jsonify, request
+import aiofiles
+import psutil
+import ffmpeg
+from bson import ObjectId
 
-# ========== CONFIGURACIÓN DEL BOT ==========
-# CREDENCIALES DIRECTAMENTE EN EL CÓDIGO (SIN .env)
-API_ID = 20534584  # Sin comillas, es número
-API_HASH = "6d5b13261d2c92a9a00afc1fd613b9df"
-BOT_TOKEN = "8562042457:AAGA__pfWDMVfdslzqwnoFl4yLrAre-HJ5I"
-ADMIN_USER_ID = "7363341763"
+# ========== CONFIGURACIÓN ==========
+# Configuración desde variables de entorno (con valores por defecto)
+API_ID = int(os.environ.get("API_ID", "34862843"))
+API_HASH = os.environ.get("API_HASH", "c61367316282c464faaa7f162d339a59")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8301377215:AAH3y8w8MmQnHdgtqCX7JuOfVNMfg1DEg_A")
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "7825439699"))
+PORT = int(os.environ.get("PORT", 10000))
 
-# Configuración de compresión
-COMPRESSION_SETTINGS = {
-    "target_size_mb": 50,
-    "resolution": "1280x720",
-    "crf": 23,
-    "preset": "medium"
-}
+# Configuración del sistema
+MAX_FILE_SIZE = 4 * 1024 * 1024 * 1024  # 4GB
+MAX_CONCURRENT = 2
+MAX_QUEUE_SIZE = 20
+COMPRESSION_PRESET = "medium"
+TARGET_RESOLUTION = "1280x720"
+WORK_DIR = Path("/tmp/video_bot_pro")
+UPLOAD_DIR = WORK_DIR / "uploads"
+OUTPUT_DIR = WORK_DIR / "output"
 
-# Límites del sistema
-MAX_QUEUE_SIZE = 10
-MAX_CONCURRENT_PROCESSES = 2
-MAX_FILE_SIZE = 4000 * 1024 * 1024  # 500MB
+# Crear directorios
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Directorio de trabajo
-WORK_DIR = "/tmp/video_bot"
-os.makedirs(WORK_DIR, exist_ok=True)
-
-# Tipos MIME de video aceptados
-VIDEO_MIME_TYPES = [
-    "video/mp4", "video/avi", "video/mkv", "video/mov", "video/wmv",
-    "video/flv", "video/webm", "video/mpeg", "video/quicktime", "video/x-msvideo"
-]
-
-# ========== CONFIGURACIÓN DE LOGGING ==========
+# ========== LOGGING PROFESIONAL ==========
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
     handlers=[
         logging.FileHandler('bot.log', encoding='utf-8'),
-        logging.StreamHandler()
+        logging.StreamHandler(sys.stdout)
     ]
 )
 logger = logging.getLogger(__name__)
 
-# ========== SISTEMA DE COLA ==========
-video_queue = deque()
-active_processes = {}
-queue_lock = threading.Lock()
-process_lock = threading.Lock()
+# ========== FLASK APP PARA RENDER ==========
+flask_app = Flask(__name__)
+start_time = datetime.now()
 
-# ========== SERVIDOR WEB PARA RENDER ==========
-from flask import Flask, jsonify
-
-app_flask = Flask(__name__)
-
-@app_flask.route('/')
+@flask_app.route('/')
 def home():
+    """Página principal del web service"""
     return jsonify({
         "status": "online",
-        "service": "Video Compression Bot",
-        "message": "Bot funcionando en Render",
-        "queue_size": len(video_queue),
-        "active_processes": len(active_processes)
+        "service": "Video Compression Bot Pro",
+        "version": "2.0.0",
+        "uptime": str(datetime.now() - start_time),
+        "endpoints": {
+            "health": "/health",
+            "stats": "/stats",
+            "queue": "/queue",
+            "system": "/system"
+        }
     })
 
-@app_flask.route('/health')
-def health():
-    with queue_lock:
-        queue_size = len(video_queue)
-    with process_lock:
-        active_count = len(active_processes)
-    
+@flask_app.route('/health')
+def health_check():
+    """Health check para Render"""
     return jsonify({
         "status": "healthy",
-        "queue_size": queue_size,
-        "active_processes": active_count,
-        "timestamp": time.time(),
-        "uptime": time.time() - app_start_time if 'app_start_time' in globals() else 0
+        "timestamp": datetime.now().isoformat(),
+        "bot_running": "bot" in globals()
+    }), 200
+
+@flask_app.route('/stats')
+def stats():
+    """Estadísticas del bot"""
+    return jsonify({
+        "queue_size": len(task_queue),
+        "active_tasks": len(active_tasks),
+        "total_processed": stats_data["total_processed"],
+        "total_size_processed": stats_data["total_size_processed"],
+        "avg_compression_ratio": stats_data["avg_ratio"],
+        "uptime": str(datetime.now() - start_time)
     })
 
-@app_flask.route('/queue')
+@flask_app.route('/system')
+def system_info():
+    """Información del sistema"""
+    return jsonify({
+        "cpu_percent": psutil.cpu_percent(),
+        "memory_percent": psutil.virtual_memory().percent,
+        "disk_usage": psutil.disk_usage('/').percent,
+        "python_version": sys.version,
+        "platform": sys.platform
+    })
+
+@flask_app.route('/queue')
 def queue_status():
-    with queue_lock:
-        queue_list = []
-        for i, (task_id, chat_id, msg_id, path, name) in enumerate(list(video_queue)[:20], 1):
-            file_exists = os.path.exists(path)
-            size = os.path.getsize(path) if file_exists else 0
-            queue_list.append({
-                "position": i,
-                "task_id": task_id,
-                "user_id": chat_id,
-                "filename": name,
-                "size": size,
-                "file_exists": file_exists
-            })
+    """Estado de la cola"""
+    queue_info = []
+    for i, task in enumerate(list(task_queue)[:10], 1):
+        queue_info.append({
+            "position": i,
+            "task_id": task["id"],
+            "user_id": task["user_id"],
+            "filename": task["filename"],
+            "size": task["size"],
+            "status": "queued"
+        })
+    
+    active_info = []
+    for task_id, task in active_tasks.items():
+        active_info.append({
+            "task_id": task_id,
+            "filename": task.get("filename", "Unknown"),
+            "progress": task.get("progress", 0),
+            "start_time": task.get("start_time"),
+            "user_id": task.get("user_id")
+        })
     
     return jsonify({
-        "total_in_queue": len(video_queue),
-        "queue": queue_list,
-        "active_processes": len(active_processes)
+        "queued": queue_info,
+        "active": active_info,
+        "max_queue": MAX_QUEUE_SIZE,
+        "max_concurrent": MAX_CONCURRENT
     })
 
-def run_flask():
-    """Ejecuta Flask en un hilo separado"""
-    port = int(os.environ.get('PORT', 10000))
-    app_flask.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+# ========== SISTEMA DE GESTIÓN DE TAREAS ==========
+task_queue = deque()
+active_tasks = {}
+task_lock = threading.Lock()
+stats_data = {
+    "total_processed": 0,
+    "total_size_processed": 0,
+    "avg_ratio": 0
+}
 
-# ========== FUNCIONES DE PROGRESO ==========
-def create_progress_bar(percentage, length=15):
-    """Crea una barra de progreso visual"""
-    percentage = max(0, min(100, percentage))
-    filled = int(length * percentage / 100)
-    bar = "█" * filled + "░" * (length - filled)
-    return bar
-
-def format_time(seconds):
-    """Formatea segundos a tiempo legible"""
-    if seconds < 60:
-        return f"{int(seconds)} segundos"
-    elif seconds < 3600:
-        minutes = int(seconds // 60)
-        secs = int(seconds % 60)
-        return f"{minutes} min {secs} seg"
-    else:
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        return f"{hours} horas {minutes} min"
-
-def format_size(bytes_size):
-    """Formatea bytes a tamaño legible"""
-    if bytes_size >= 1024 * 1024 * 1024:
-        return f"{bytes_size/(1024*1024*1024):.1f} GB"
-    elif bytes_size >= 1024 * 1024:
-        return f"{bytes_size/(1024*1024):.1f} MB"
-    elif bytes_size >= 1024:
-        return f"{bytes_size/1024:.1f} KB"
-    else:
-        return f"{bytes_size} B"
-
-# ========== FUNCIONES DE VIDEO ==========
-def get_video_info(video_path):
-    """Obtiene información del video usando ffprobe"""
-    try:
-        cmd = [
-            'ffprobe', '-v', 'quiet', '-print_format', 'json',
-            '-show_format', '-show_streams', video_path
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode == 0:
-            return json.loads(result.stdout)
+class TaskManager:
+    """Gestor profesional de tareas de compresión"""
+    
+    @staticmethod
+    def add_task(user_id: int, file_path: Path, filename: str, size: int):
+        """Agrega una nueva tarea a la cola"""
+        with task_lock:
+            if len(task_queue) >= MAX_QUEUE_SIZE:
+                raise Exception("Queue is full")
+            
+            task_id = str(uuid.uuid4())[:8]
+            task = {
+                "id": task_id,
+                "user_id": user_id,
+                "file_path": str(file_path),
+                "filename": filename,
+                "size": size,
+                "added_time": datetime.now(),
+                "status": "queued"
+            }
+            
+            task_queue.append(task)
+            logger.info(f"📥 Task added: {task_id} - {filename} ({size:,} bytes)")
+            return task_id
+    
+    @staticmethod
+    def get_next_task():
+        """Obtiene la siguiente tarea de la cola"""
+        with task_lock:
+            if task_queue:
+                return task_queue.popleft()
         return None
-    except subprocess.TimeoutExpired:
-        logger.error(f"Timeout al obtener info del video: {video_path}")
-        return None
-    except Exception as e:
-        logger.error(f"Error obteniendo info del video: {e}")
-        return None
-
-def calculate_bitrate(target_size_mb, duration_seconds):
-    """Calcula el bitrate necesario para alcanzar el tamaño objetivo"""
-    if duration_seconds <= 0:
-        return 1000  # bitrate por defecto
     
-    # Convertir tamaño objetivo a kilobits (1 MB = 8000 kilobits)
-    target_kbits = target_size_mb * 8000
+    @staticmethod
+    def start_task(task_id, task_data):
+        """Marca una tarea como activa"""
+        with task_lock:
+            active_tasks[task_id] = {
+                **task_data,
+                "start_time": datetime.now(),
+                "progress": 0,
+                "status": "processing"
+            }
     
-    # Calcular bitrate (kbps)
-    bitrate = int(target_kbits / duration_seconds)
+    @staticmethod
+    def update_progress(task_id, progress):
+        """Actualiza el progreso de una tarea"""
+        with task_lock:
+            if task_id in active_tasks:
+                active_tasks[task_id]["progress"] = progress
     
-    # Ajustar límites (entre 500kbps y 4000kbps)
-    bitrate = max(500, min(bitrate, 4000))
+    @staticmethod
+    def complete_task(task_id, result):
+        """Completa una tarea"""
+        with task_lock:
+            if task_id in active_tasks:
+                # Actualizar estadísticas
+                stats_data["total_processed"] += 1
+                if "original_size" in result and "compressed_size" in result:
+                    original = result["original_size"]
+                    compressed = result["compressed_size"]
+                    stats_data["total_size_processed"] += original
+                    
+                    if compressed > 0:
+                        ratio = original / compressed
+                        # Actualizar promedio móvil
+                        if stats_data["avg_ratio"] == 0:
+                            stats_data["avg_ratio"] = ratio
+                        else:
+                            stats_data["avg_ratio"] = (stats_data["avg_ratio"] + ratio) / 2
+                
+                del active_tasks[task_id]
+                logger.info(f"✅ Task completed: {task_id}")
     
-    return bitrate
-
-def parse_ffmpeg_time(time_str):
-    """Parsea el tiempo de la salida de ffmpeg"""
-    try:
-        if 'time=' in time_str:
-            time_match = re.search(r'time=(\d{2}):(\d{2}):(\d{2})\.\d{2}', time_str)
-            if time_match:
-                hours = int(time_match.group(1))
-                minutes = int(time_match.group(2))
-                seconds = int(time_match.group(3))
-                return hours * 3600 + minutes * 60 + seconds
-        return None
-    except Exception as e:
-        logger.debug(f"Error parseando tiempo: {e}")
-        return None
-
-def is_video_document(message: Message):
-    """Verifica si un documento es un video"""
-    if not message.document:
-        return False
-    
-    # Verificar por extensión de archivo
-    if hasattr(message.document, 'file_name') and message.document.file_name:
-        video_extensions = ['.mp4', '.avi', '.mkv', '.mov', '.wmv', 
-                          '.flv', '.webm', '.m4v', '.3gp', '.ogg']
-        file_ext = os.path.splitext(message.document.file_name.lower())[1]
-        if file_ext in video_extensions:
-            return True
-    
-    # Verificar por tipo MIME si está disponible
-    if hasattr(message.document, 'mime_type') and message.document.mime_type:
-        if any(video_type in message.document.mime_type.lower() for video_type in ['video', 'mp4', 'avi', 'mkv', 'mov']):
-            return True
-    
-    # Verificar por tamaño (si es muy grande, probablemente no es un video pequeño)
-    if hasattr(message.document, 'file_size'):
-        if message.document.file_size > 10 * 1024 * 1024:  # Más de 10MB
-            return True
-    
-    return False
+    @staticmethod
+    def fail_task(task_id, error):
+        """Marca una tarea como fallida"""
+        with task_lock:
+            if task_id in active_tasks:
+                active_tasks[task_id]["status"] = "failed"
+                active_tasks[task_id]["error"] = str(error)
+                logger.error(f"❌ Task failed: {task_id} - {error}")
 
 # ========== PROCESADOR DE VIDEOS ==========
-class VideoProcessor(threading.Thread):
-    """Hilo para procesar videos de la cola"""
+class VideoProcessor:
+    """Procesador profesional de videos usando FFmpeg"""
     
-    def __init__(self, app):
-        super().__init__(daemon=True)
-        self.app = app
-        self.running = True
-        self.current_task_id = None
-        
-    def run(self):
-        """Procesa videos de la cola continuamente"""
-        logger.info("🔄 Procesador de videos iniciado")
-        
-        while self.running:
-            try:
-                # Obtener siguiente tarea de la cola
-                task = None
-                with queue_lock:
-                    if video_queue:
-                        task = video_queue.popleft()
-                        self.current_task_id = task[0]
-                
-                if task:
-                    task_id, chat_id, message_id, file_path, original_name = task
-                    logger.info(f"📥 Procesando video: {original_name} (ID: {task_id})")
-                    self.process_video(task_id, chat_id, message_id, file_path, original_name)
-                else:
-                    # No hay tareas, esperar
-                    time.sleep(2)
-                    
-            except Exception as e:
-                logger.error(f"❌ Error en procesador principal: {e}")
-                time.sleep(5)
-    
-    def process_video(self, task_id, chat_id, message_id, file_path, original_name):
-        """Procesa un video individual"""
-        progress_msg_id = None
-        
+    @staticmethod
+    def get_video_info(file_path: str) -> dict:
+        """Obtiene información detallada del video"""
         try:
-            # Verificar que el archivo existe
-            if not os.path.exists(file_path):
-                logger.error(f"Archivo no encontrado: {file_path}")
-                asyncio.run_coroutine_threadsafe(
-                    self.send_error_message(chat_id, original_name, "El archivo temporal no se encontró"),
-                    asyncio.get_event_loop()
-                ).result()
-                return
+            probe = ffmpeg.probe(file_path)
+            video_stream = next((s for s in probe['streams'] if s['codec_type'] == 'video'), None)
+            audio_stream = next((s for s in probe['streams'] if s['codec_type'] == 'audio'), None)
             
-            # Agregar a procesos activos
-            with process_lock:
-                active_processes[task_id] = {
-                    'chat_id': chat_id,
-                    'start_time': time.time(),
-                    'status': 'procesando',
-                    'filename': original_name,
-                    'progress': 0
+            return {
+                "duration": float(probe['format']['duration']),
+                "size": int(probe['format']['size']),
+                "format": probe['format']['format_name'],
+                "video": {
+                    "codec": video_stream['codec_name'] if video_stream else None,
+                    "resolution": f"{video_stream['width']}x{video_stream['height']}" if video_stream else None,
+                    "bitrate": int(video_stream.get('bit_rate', 0)) if video_stream else 0,
+                    "fps": eval(video_stream['avg_frame_rate']) if video_stream and 'avg_frame_rate' in video_stream else 0
+                } if video_stream else None,
+                "audio": {
+                    "codec": audio_stream['codec_name'] if audio_stream else None,
+                    "channels": audio_stream.get('channels', 0) if audio_stream else 0,
+                    "bitrate": int(audio_stream.get('bit_rate', 0)) if audio_stream else 0
+                } if audio_stream else None
+            }
+        except Exception as e:
+            logger.error(f"Error getting video info: {e}")
+            return None
+    
+    @staticmethod
+    def calculate_optimal_settings(original_info: dict, target_size_mb: int = 50):
+        """Calcula configuración óptima para compresión"""
+        duration = original_info["duration"]
+        
+        if duration <= 0:
+            return {
+                "video_bitrate": "1000k",
+                "audio_bitrate": "128k",
+                "crf": 23,
+                "preset": COMPRESSION_PRESET
+            }
+        
+        # Calcular bitrate para tamaño objetivo
+        target_bits = target_size_mb * 8 * 1024 * 1024  # Convertir a bits
+        required_bitrate = int(target_bits / duration)  # bits por segundo
+        
+        # Ajustar límites
+        video_bitrate = max(500, min(required_bitrate - 128000, 4000000))
+        audio_bitrate = 128000
+        
+        return {
+            "video_bitrate": f"{video_bitrate // 1000}k",
+            "audio_bitrate": f"{audio_bitrate // 1000}k",
+            "crf": 23 if video_bitrate > 1500000 else 26,
+            "preset": COMPRESSION_PRESET,
+            "resolution": TARGET_RESOLUTION
+        }
+    
+    @staticmethod
+    async def compress_video(input_path: str, output_path: str, settings: dict, 
+                           progress_callback=None) -> dict:
+        """Comprime un video con progreso en tiempo real"""
+        try:
+            # Construir comando FFmpeg
+            input_stream = ffmpeg.input(input_path)
+            
+            # Aplicar filtros
+            video = input_stream.video.filter('scale', settings["resolution"])
+            
+            # Configurar salida
+            output = ffmpeg.output(
+                video,
+                input_stream.audio,
+                output_path,
+                **{
+                    'c:v': 'libx264',
+                    'preset': settings["preset"],
+                    'crf': str(settings["crf"]),
+                    'b:v': settings["video_bitrate"],
+                    'maxrate': settings["video_bitrate"],
+                    'bufsize': f"{int(settings['video_bitrate'][:-1]) * 2}k",
+                    'c:a': 'aac',
+                    'b:a': settings["audio_bitrate"],
+                    'threads': '2',
+                    'movflags': '+faststart'
                 }
+            )
             
-            # Ruta de salida
-            safe_name = re.sub(r'[^\w\-.]', '_', original_name)
-            output_name = f"compressed_{task_id}_{safe_name}"
-            output_path = os.path.join(WORK_DIR, output_name)
-            
-            # Enviar mensaje de inicio
-            progress_msg = asyncio.run_coroutine_threadsafe(
-                self.send_progress_message(chat_id, original_name, 0, 0, task_id),
-                asyncio.get_event_loop()
-            ).result()
-            
-            if progress_msg:
-                progress_msg_id = progress_msg.id
-                with process_lock:
-                    if task_id in active_processes:
-                        active_processes[task_id]['progress_msg_id'] = progress_msg_id
-            
-            # Obtener información del video
-            logger.info(f"📊 Analizando video: {original_name}")
-            video_info = get_video_info(file_path)
-            if not video_info:
-                raise Exception("No se pudo obtener información del video (ffprobe falló)")
-            
-            # Extraer duración y tamaño
-            duration = 0
-            if 'format' in video_info and 'duration' in video_info['format']:
-                try:
-                    duration = float(video_info['format']['duration'])
-                except:
-                    duration = 0
-            
-            original_size = os.path.getsize(file_path)
-            
-            # Calcular bitrate para compresión
-            bitrate = calculate_bitrate(COMPRESSION_SETTINGS["target_size_mb"], duration)
-            logger.info(f"🎯 Bitrate calculado: {bitrate}kbps para {duration:.1f}s de video")
-            
-            # Construir comando ffmpeg
-            cmd = [
-                'ffmpeg',
-                '-i', file_path,
-                '-vf', f'scale={COMPRESSION_SETTINGS["resolution"]}',
-                '-c:v', 'libx264',
-                '-preset', COMPRESSION_SETTINGS["preset"],
-                '-crf', str(COMPRESSION_SETTINGS["crf"]),
-                '-b:v', f'{bitrate}k',
-                '-maxrate', f'{bitrate * 1.5}k',
-                '-bufsize', f'{bitrate * 2}k',
-                '-c:a', 'aac',
-                '-b:a', '128k',
-                '-threads', '2',
-                '-y',  # Sobrescribir si existe
-                output_path
-            ]
-            
-            # Ejecutar compresión
-            logger.info(f"🎬 Iniciando compresión: {original_name}")
-            start_time = time.time()
-            process = subprocess.Popen(
-                cmd,
-                stderr=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                universal_newlines=True,
-                bufsize=1,
-                encoding='utf-8',
-                errors='replace'
+            # Ejecutar con callback de progreso
+            process = await asyncio.create_subprocess_shell(
+                ffmpeg.compile(output, overwrite_output=True),
+                stderr=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.DEVNULL
             )
             
             # Monitorear progreso
-            last_update = start_time
-            last_percentage = 0
-            
+            duration = None
             while True:
-                line = process.stderr.readline()
+                line = await process.stderr.readline()
                 if not line:
-                    if process.poll() is not None:
+                    if process.returncode is not None:
                         break
-                    time.sleep(0.1)
+                    await asyncio.sleep(0.1)
                     continue
                 
-                # Parsear tiempo actual
-                current_time = parse_ffmpeg_time(line)
-                if current_time and duration > 0:
-                    percentage = min(99.9, (current_time / duration) * 100)
-                    elapsed = time.time() - start_time
-                    
-                    # Actualizar cada 3 segundos o si el progreso cambió significativamente
-                    if time.time() - last_update >= 3 or abs(percentage - last_percentage) >= 5:
-                        with process_lock:
-                            if task_id in active_processes:
-                                active_processes[task_id]['progress'] = percentage
-                                active_processes[task_id]['elapsed'] = elapsed
-                        
-                        asyncio.run_coroutine_threadsafe(
-                            self.send_progress_message(chat_id, original_name, percentage, elapsed, task_id),
-                            asyncio.get_event_loop()
-                        ).result()
-                        
-                        last_update = time.time()
-                        last_percentage = percentage
+                line = line.decode('utf-8', errors='ignore')
+                
+                # Parsear duración
+                if duration is None and "Duration:" in line:
+                    try:
+                        dur_str = line.split("Duration:")[1].split(",")[0].strip()
+                        h, m, s = dur_str.split(":")
+                        s, ms = s.split(".")
+                        duration = int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 100
+                    except:
+                        pass
+                
+                # Parsear tiempo actual y llamar al callback
+                if duration and "time=" in line and progress_callback:
+                    try:
+                        time_str = line.split("time=")[1].split(" ")[0]
+                        h, m, s = time_str.split(":")
+                        current = int(h) * 3600 + int(m) * 60 + float(s)
+                        progress = min(99, (current / duration) * 100)
+                        await progress_callback(progress)
+                    except:
+                        pass
             
-            # Esperar finalización
-            process.wait()
+            await process.wait()
             
             if process.returncode != 0:
-                raise Exception(f"FFmpeg falló con código {process.returncode}")
+                raise Exception(f"FFmpeg failed with code {process.returncode}")
             
             # Verificar archivo de salida
             if not os.path.exists(output_path):
-                raise Exception("No se generó el archivo comprimido")
+                raise Exception("Output file not created")
             
-            # Obtener tamaño comprimido
-            compressed_size = os.path.getsize(output_path)
-            saved = original_size - compressed_size
-            saved_percent = (saved / original_size * 100) if original_size > 0 else 0
+            # Obtener información del archivo comprimido
+            compressed_info = VideoProcessor.get_video_info(output_path)
             
-            # Actualizar estado
-            total_time = time.time() - start_time
-            logger.info(f"✅ Compresión exitosa: {original_name} "
-                       f"({format_size(original_size)} → {format_size(compressed_size)}, "
-                       f"ahorro: {saved_percent:.1f}%, tiempo: {format_time(total_time)})")
-            
-            # Enviar video comprimido
-            asyncio.run_coroutine_threadsafe(
-                self.send_compressed_video(chat_id, output_path, original_name, 
-                                         original_size, compressed_size, saved_percent, task_id),
-                asyncio.get_event_loop()
-            ).result()
+            return {
+                "success": True,
+                "output_path": output_path,
+                "compressed_info": compressed_info,
+                "original_size": os.path.getsize(input_path),
+                "compressed_size": os.path.getsize(output_path)
+            }
             
         except Exception as e:
-            logger.error(f"❌ Error procesando video {original_name}: {e}")
-            try:
-                asyncio.run_coroutine_threadsafe(
-                    self.send_error_message(chat_id, original_name, str(e), task_id),
-                    asyncio.get_event_loop()
-                ).result()
-            except Exception as err:
-                logger.error(f"❌ Error enviando mensaje de error: {err}")
-        finally:
-            # Limpiar archivos temporales
-            try:
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                    logger.debug(f"🗑️ Eliminado archivo temporal: {file_path}")
-            except Exception as e:
-                logger.error(f"Error eliminando archivo temporal {file_path}: {e}")
-            
-            try:
-                if 'output_path' in locals() and os.path.exists(output_path):
-                    os.remove(output_path)
-                    logger.debug(f"🗑️ Eliminado archivo de salida: {output_path}")
-            except Exception as e:
-                logger.error(f"Error eliminando archivo de salida: {e}")
-            
-            # Remover de procesos activos
-            with process_lock:
-                if task_id in active_processes:
-                    del active_processes[task_id]
-            
-            self.current_task_id = None
-            
-            # Limpiar mensaje de progreso
-            if progress_msg_id:
-                try:
-                    asyncio.run_coroutine_threadsafe(
-                        self.clean_progress_message(chat_id, progress_msg_id),
-                        asyncio.get_event_loop()
-                    ).result()
-                except:
-                    pass
-    
-    async def send_progress_message(self, chat_id, filename, percentage, elapsed, task_id=None):
-        """Envía/actualiza mensaje de progreso"""
-        try:
-            bar = create_progress_bar(percentage)
-            time_str = format_time(elapsed)
-            
-            # Calcular tiempo estimado restante
-            remaining = ""
-            if percentage > 5:
-                total_estimated = elapsed / (percentage / 100)
-                remaining_estimated = total_estimated - elapsed
-                if remaining_estimated > 0:
-                    remaining = f"\n⏳ Restante: {format_time(remaining_estimated)}"
-            
-            message = (
-                f"🎬 **Comprimiendo video...**\n\n"
-                f"📁 `{filename[:40]}{'...' if len(filename) > 40 else ''}`\n\n"
-                f"{bar} **{percentage:.1f}%**\n\n"
-                f"⏱️ Transcurrido: {time_str}"
-                f"{remaining}"
-            )
-            
-            # Buscar mensaje de progreso existente
-            msg_id = None
-            with process_lock:
-                if task_id and task_id in active_processes and 'progress_msg_id' in active_processes[task_id]:
-                    msg_id = active_processes[task_id]['progress_msg_id']
-                else:
-                    # Buscar en todos los procesos activos del usuario
-                    for pid, info in active_processes.items():
-                        if info['chat_id'] == chat_id and 'progress_msg_id' in info:
-                            msg_id = info['progress_msg_id']
-                            break
-            
-            if msg_id:
-                # Actualizar mensaje existente
-                try:
-                    await self.app.edit_message_text(
-                        chat_id=chat_id,
-                        message_id=msg_id,
-                        text=message,
-                        parse_mode=ParseMode.MARKDOWN
-                    )
-                    return None
-                except Exception as e:
-                    logger.debug(f"No se pudo editar mensaje {msg_id}: {e}")
-                    # Si falla la edición, crear uno nuevo
-            
-            # Crear nuevo mensaje
-            msg = await self.app.send_message(
-                chat_id=chat_id,
-                text=message,
-                parse_mode=ParseMode.MARKDOWN
-            )
-            
-            # Guardar ID del mensaje
-            if msg and task_id:
-                with process_lock:
-                    if task_id in active_processes:
-                        active_processes[task_id]['progress_msg_id'] = msg.id
-            
-            return msg
-            
-        except Exception as e:
-            logger.error(f"❌ Error enviando progreso: {e}")
-            return None
-    
-    async def send_compressed_video(self, chat_id, video_path, original_name, 
-                                   original_size, compressed_size, saved_percent, task_id=None):
-        """Envía el video comprimido al usuario"""
-        try:
-            # Calcular ratio
-            ratio = original_size / compressed_size if compressed_size > 0 else 1
-            
-            # Preparar caption
-            caption = (
-                f"✅ **Video comprimido exitosamente!**\n\n"
-                f"📁 `{original_name[:50]}{'...' if len(original_name) > 50 else ''}`\n\n"
-                f"📊 **Resultados:**\n"
-                f"• Tamaño original: {format_size(original_size)}\n"
-                f"• Tamaño comprimido: {format_size(compressed_size)}\n"
-                f"• Espacio ahorrado: {saved_percent:.1f}%\n"
-                f"• Ratio de compresión: {ratio:.1f}x\n\n"
-                f"⚡ **¡Listo para compartir!**"
-            )
-            
-            # Enviar video
-            logger.info(f"📤 Enviando video comprimido a {chat_id}: {original_name}")
-            
-            await self.app.send_chat_action(chat_id, "upload_video")
-            
-            # Intentar enviar el video
-            try:
-                await self.app.send_video(
-                    chat_id=chat_id,
-                    video=video_path,
-                    caption=caption,
-                    parse_mode=ParseMode.MARKDOWN,
-                    supports_streaming=True
-                )
-                logger.info(f"✅ Video enviado exitosamente: {original_name}")
-            except Exception as send_error:
-                # Si falla, enviar mensaje alternativo
-                logger.error(f"Error enviando video, enviando enlace alternativo: {send_error}")
-                await self.app.send_message(
-                    chat_id=chat_id,
-                    text=f"✅ **Video comprimido pero demasiado grande para Telegram**\n\n"
-                         f"El video fue comprimido exitosamente pero supera el límite de Telegram.\n"
-                         f"**Resultados:**\n"
-                         f"- Tamaño original: {format_size(original_size)}\n"
-                         f"- Tamaño comprimido: {format_size(compressed_size)}\n"
-                         f"- Ahorro: {saved_percent:.1f}%\n\n"
-                         f"💡 *Sugerencia:* Intenta con un video más corto.",
-                    parse_mode=ParseMode.MARKDOWN
-                )
-            
-            # Limpiar mensaje de progreso
-            await self.clean_progress_message_by_task(task_id, chat_id)
-            
-        except Exception as e:
-            logger.error(f"❌ Error enviando video: {e}")
-            await self.app.send_message(
-                chat_id=chat_id,
-                text=f"✅ Video comprimido, pero hubo un error al enviarlo: {str(e)[:200]}"
-            )
-    
-    async def send_error_message(self, chat_id, filename, error, task_id=None):
-        """Envía mensaje de error"""
-        try:
-            error_msg = (
-                f"❌ **Error al procesar video**\n\n"
-                f"📁 `{filename[:50]}{'...' if len(filename) > 50 else ''}`\n\n"
-                f"**Error:** {str(error)[:200]}\n\n"
-                f"Por favor, intenta con otro video o contacta al administrador."
-            )
-            
-            await self.app.send_message(
-                chat_id=chat_id,
-                text=error_msg,
-                parse_mode=ParseMode.MARKDOWN
-            )
-            
-            # Limpiar mensaje de progreso
-            await self.clean_progress_message_by_task(task_id, chat_id)
-            
-        except Exception as e:
-            logger.error(f"❌ Error enviando mensaje de error: {e}")
-    
-    async def clean_progress_message_by_task(self, task_id, chat_id):
-        """Limpia el mensaje de progreso usando el task_id"""
-        try:
-            if not task_id:
-                return
-                
-            with process_lock:
-                if task_id in active_processes and 'progress_msg_id' in active_processes[task_id]:
-                    msg_id = active_processes[task_id]['progress_msg_id']
-                    try:
-                        await self.app.delete_messages(chat_id, msg_id)
-                        logger.debug(f"🗑️ Mensaje de progreso eliminado: {msg_id}")
-                    except Exception as e:
-                        logger.debug(f"No se pudo eliminar mensaje {msg_id}: {e}")
-        except Exception as e:
-            logger.error(f"Error limpiando mensaje de progreso: {e}")
-    
-    async def clean_progress_message(self, chat_id, msg_id):
-        """Limpia un mensaje de progreso específico"""
-        try:
-            await self.app.delete_messages(chat_id, msg_id)
-        except:
-            pass
-    
-    def stop(self):
-        """Detiene el procesador"""
-        self.running = False
-        logger.info("⏹️ Procesador de videos detenido")
+            logger.error(f"Compression error: {e}")
+            return {"success": False, "error": str(e)}
 
 # ========== BOT DE TELEGRAM ==========
-# Crear cliente de Pyrogram
-app = Client(
-    "video_compression_bot",
+# Configurar Pyrogram con ajustes optimizados
+bot = Client(
+    "video_compression_bot_pro",
     api_id=API_ID,
     api_hash=API_HASH,
-    bot_token=BOT_TOKEN
+    bot_token=BOT_TOKEN,
+    workers=100,
+    sleep_threshold=60,
+    max_concurrent_transmissions=5,
+    in_memory=True
 )
 
-# Variables globales
-processor = None
-app_start_time = None
+# ========== MANEJADORES DEL BOT ==========
+@bot.on_message(filters.command(["start", "help"]))
+async def start_handler(client: Client, message: Message):
+    """Manejador del comando /start"""
+    welcome_text = """
+🎬 **Video Compression Bot Pro** 🚀
 
-@app.on_message(filters.command(["start", "help"]))
-async def start_command(client, message: Message):
-    """Comando de inicio"""
-    help_text = (
-        "🎬 **Bot de Compresión de Videos**\n\n"
-        "Envía cualquier video para comprimirlo automáticamente.\n\n"
-        "⚡ **Características:**\n"
-        "• Compresión automática con FFmpeg\n"
-        "• Barra de progreso en tiempo real\n"
-        "• Sistema de cola inteligente\n"
-        "• Máximo tamaño por video: 500MB\n"
-        "• Formatos soportados: MP4, AVI, MKV, MOV, etc.\n\n"
-        "📊 **Estadísticas actuales:**\n"
-        f"• 🕒 Uptime: {format_time(time.time() - app_start_time) if app_start_time else 'Iniciando'}\n"
-        f"• 📋 En cola: {len(video_queue)}\n"
-        f"• 🔄 Procesando: {len(active_processes)}\n"
-        f"• 💾 Directorio: {WORK_DIR}\n\n"
-        "⚠️ **Nota:** Los videos se procesan en orden de llegada.\n\n"
-        "**Comandos disponibles:**\n"
-        "/start - Muestra este mensaje\n"
-        "/status - Estado del sistema\n"
-        "/queue - Ver cola de espera\n"
-        "/clean - Limpiar mis archivos en espera\n"
-        "/info - Información técnica"
-    )
+¡Hola! Soy un bot profesional de compresión de videos con soporte para archivos de hasta **4GB**.
+
+**📦 Características:**
+• Compresión inteligente con FFmpeg
+• Soporte para archivos de hasta 4GB
+• Sistema de cola profesional
+• Progreso en tiempo real
+• Web dashboard integrado
+
+**📁 Formatos soportados:**
+MP4, AVI, MKV, MOV, WMV, FLV, WebM, y más...
+
+**⚡ Comandos disponibles:**
+/start - Muestra este mensaje
+/status - Estado del sistema
+/queue - Ver cola de procesamiento
+/stats - Estadísticas del bot
+/clean - Limpiar mis archivos
+
+**🚀 ¡Solo envía un video para comenzar!**
+"""
     
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 Estado del Sistema", callback_data="status")],
-        [InlineKeyboardButton("❓ Cómo usar", callback_data="howto")],
-        [InlineKeyboardButton("🛠️ Soporte", url="https://t.me/" + ADMIN_USER_ID)]
+        [InlineKeyboardButton("🌐 Web Dashboard", url=f"http://localhost:{PORT}")],
+        [InlineKeyboardButton("📊 Estado", callback_data="status"),
+         InlineKeyboardButton("📋 Cola", callback_data="queue")]
     ])
     
-    await message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
+    await message.reply_text(welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
 
-@app.on_message(filters.command("status"))
-async def status_command(client, message: Message):
-    """Muestra el estado del sistema"""
-    with queue_lock:
-        queue_size = len(video_queue)
-        queue_list = list(video_queue)[:5]
-    
-    with process_lock:
-        active_count = len(active_processes)
-        active_list = list(active_processes.items())[:5]
-    
-    # Calcular uso de disco
-    try:
-        total, used, free = shutil.disk_usage(WORK_DIR)
-        disk_usage = f"💾 {used/total*100:.1f}% usado ({format_size(free)} libre)"
-    except:
-        disk_usage = "💾 N/A"
-    
-    status_text = (
-        "📊 **Estado del Sistema de Compresión**\n\n"
-        f"📋 **Videos en cola:** {queue_size}\n"
-        f"🔄 **Procesando ahora:** {active_count}/{MAX_CONCURRENT_PROCESSES}\n"
-        f"{disk_usage}\n"
-        f"🕒 **Uptime:** {format_time(time.time() - app_start_time) if app_start_time else 'N/A'}\n\n"
-    )
-    
-    if queue_size > 0:
-        estimated_time = queue_size * 180  # 3 minutos por video estimado
-        status_text += f"⏱️ **Tiempo estimado total:** {format_time(estimated_time)}\n\n"
-        
-        if queue_list:
-            status_text += "**📥 Próximos en cola:**\n"
-            for i, (_, _, _, _, name) in enumerate(queue_list, 1):
-                short_name = name[:25] + "..." if len(name) > 25 else name
-                status_text += f"{i}. `{short_name}`\n"
-    
-    if active_count > 0:
-        status_text += "\n**🔄 Procesos activos:**\n"
-        for task_id, info in active_list:
-            elapsed = time.time() - info['start_time']
-            short_name = info['filename'][:20] + "..." if len(info['filename']) > 20 else info['filename']
-            progress = info.get('progress', 0)
-            status_text += f"• `{short_name}` - {progress:.1f}% ({format_time(elapsed)})\n"
+@bot.on_message(filters.command("status"))
+async def status_handler(client: Client, message: Message):
+    """Estado del sistema"""
+    with task_lock:
+        queue_size = len(task_queue)
+        active_count = len(active_tasks)
     
     # Información del sistema
-    import psutil
-    cpu_percent = psutil.cpu_percent()
-    memory = psutil.virtual_memory()
-    status_text += f"\n**⚙️ Sistema:** CPU: {cpu_percent}% | RAM: {memory.percent}%"
-    
-    await message.reply_text(status_text, parse_mode=ParseMode.MARKDOWN)
-
-@app.on_message(filters.command("queue"))
-async def queue_command(client, message: Message):
-    """Muestra los videos en cola"""
-    with queue_lock:
-        if not video_queue:
-            await message.reply_text(
-                "📭 **La cola está vacía.**\n\n"
-                "No hay videos esperando procesamiento. ¡Envía uno!",
-                parse_mode=ParseMode.MARKDOWN
-            )
-            return
-        
-        queue_text = "📋 **Videos en cola de espera:**\n\n"
-        total_size = 0
-        user_in_queue = 0
-        
-        for i, (task_id, chat_id, msg_id, path, name) in enumerate(list(video_queue)[:8], 1):
-            # Calcular tamaño si el archivo existe
-            size_str = ""
-            if os.path.exists(path):
-                try:
-                    size = os.path.getsize(path)
-                    total_size += size
-                    size_str = f" ({format_size(size)})"
-                except:
-                    size_str = " (error tamaño)"
-            
-            short_name = name[:35] + "..." if len(name) > 35 else name
-            
-            # Marcar los videos del usuario actual
-            if chat_id == message.chat.id:
-                queue_text += f"**{i}. `{short_name}`**{size_str} 👤\n"
-                user_in_queue += 1
-            else:
-                queue_text += f"{i}. `{short_name}`{size_str}\n"
-        
-        if len(video_queue) > 8:
-            queue_text += f"\n... y **{len(video_queue) - 8}** más.\n"
-        
-        queue_text += f"\n📦 **Tamaño total en cola:** {format_size(total_size)}"
-        
-        # Información del usuario
-        if user_in_queue > 0:
-            user_position = None
-            for i, (_, chat_id, _, _, _) in enumerate(video_queue, 1):
-                if chat_id == message.chat.id:
-                    user_position = i
-                    break
-            
-            if user_position:
-                estimated_wait = max(0, user_position - len(active_processes)) * 180
-                queue_text += f"\n\n👤 **Tus videos:** {user_in_queue} en cola"
-                queue_text += f"\n🎯 **Tu posición:** {user_position}"
-                queue_text += f"\n⏱️ **Espera estimada:** {format_time(estimated_wait)}"
-        
-        # Tiempo estimado total
-        estimated_total = len(video_queue) * 180
-        queue_text += f"\n⏱️ **Tiempo total estimado:** {format_time(estimated_total)}"
-    
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 Actualizar", callback_data="refresh_queue"),
-         InlineKeyboardButton("🧹 Limpiar mis videos", callback_data="clean_my")]
-    ])
-    
-    await message.reply_text(queue_text, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
-
-@app.on_message(filters.command("clean"))
-async def clean_command(client, message: Message):
-    """Limpia los videos del usuario de la cola"""
-    user_id = message.chat.id
-    removed_count = 0
-    freed_space = 0
-    
-    with queue_lock:
-        # Crear nueva cola sin los videos del usuario
-        new_queue = deque()
-        for task in video_queue:
-            task_id, chat_id, msg_id, path, name = task
-            if chat_id == user_id:
-                # Eliminar archivo temporal
-                try:
-                    if os.path.exists(path):
-                        size = os.path.getsize(path)
-                        freed_space += size
-                        os.remove(path)
-                        logger.info(f"🗑️ Eliminado video de usuario {user_id}: {name}")
-                except Exception as e:
-                    logger.error(f"Error eliminando archivo {path}: {e}")
-                removed_count += 1
-            else:
-                new_queue.append(task)
-        
-        video_queue.clear()
-        video_queue.extend(new_queue)
-    
-    if removed_count > 0:
-        response = (
-            f"🧹 **Limpieza completada**\n\n"
-            f"✅ Videos removidos: {removed_count}\n"
-            f"💾 Espacio liberado: {format_size(freed_space)}\n"
-            f"📋 Videos restantes en cola: {len(video_queue)}"
-        )
-    else:
-        response = (
-            "✅ **No tienes videos en la cola de espera.**\n\n"
-            "Todos tus videos ya están siendo procesados o no hay videos pendientes."
-        )
-    
-    await message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
-
-@app.on_message(filters.command("info"))
-async def info_command(client, message: Message):
-    """Muestra información técnica del bot"""
-    import platform
-    import psutil
-    
-    # Información del sistema
-    system_info = platform.system()
-    python_version = platform.python_version()
-    
-    # Información de FFmpeg
-    try:
-        ffmpeg_result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
-        ffmpeg_version = ffmpeg_result.stdout.split('\n')[0] if ffmpeg_result.stdout else "No disponible"
-    except:
-        ffmpeg_version = "No instalado"
-    
-    # Uso de recursos
-    cpu_percent = psutil.cpu_percent()
+    cpu = psutil.cpu_percent()
     memory = psutil.virtual_memory()
     disk = psutil.disk_usage('/')
     
-    info_text = (
-        "🛠️ **Información Técnica del Bot**\n\n"
-        f"**📦 Sistema:** {system_info} | Python {python_version}\n"
-        f"**🎬 FFmpeg:** {ffmpeg_version[:50]}...\n"
-        f"**⚙️ Pyrogram:** {getattr(pyrogram, '__version__', 'N/A')}\n\n"
-        
-        f"**📊 Recursos del Sistema:**\n"
-        f"• CPU: {cpu_percent}% utilizado\n"
-        f"• RAM: {memory.percent}% ({format_size(memory.used)}/{format_size(memory.total)})\n"
-        f"• Disco: {disk.percent}% ({format_size(disk.used)}/{format_size(disk.total)})\n\n"
-        
-        f"**⚡ Configuración del Bot:**\n"
-        f"• Directorio de trabajo: {WORK_DIR}\n"
-        f"• Máximo por video: {format_size(MAX_FILE_SIZE)}\n"
-        f"• Máximo en cola: {MAX_QUEUE_SIZE}\n"
-        f"• Procesos concurrentes: {MAX_CONCURRENT_PROCESSES}\n"
-        f"• Resolución objetivo: {COMPRESSION_SETTINGS['resolution']}\n\n"
-        
-        f"**📈 Estadísticas:**\n"
-        f"• Uptime: {format_time(time.time() - app_start_time) if app_start_time else 'N/A'}\n"
-        f"• En cola: {len(video_queue)}\n"
-        f"• Procesando: {len(active_processes)}\n"
-        f"• Procesador activo: {'✅ Sí' if processor and processor.is_alive() else '❌ No'}"
-    )
-    
-    await message.reply_text(info_text, parse_mode=ParseMode.MARKDOWN)
+    status_text = f"""
+📊 **Estado del Sistema**
 
-# MANEJADOR DE VIDEOS CORREGIDO - SIN filters.mime_type
-@app.on_message(filters.video | filters.document)
-async def handle_video(client, message: Message):
-    """Maneja videos enviados al bot"""
+**🚦 Procesamiento:**
+• 📋 En cola: {queue_size}/{MAX_QUEUE_SIZE}
+• 🔄 Procesando: {active_count}/{MAX_CONCURRENT}
+• ✅ Procesados: {stats_data['total_processed']}
+
+**⚙️ Sistema:**
+• CPU: {cpu:.1f}%
+• RAM: {memory.percent:.1f}%
+• Disco: {disk.percent:.1f}%
+• Uptime: {str(datetime.now() - start_time).split('.')[0]}
+
+**💾 Estadísticas:**
+• Total procesado: {stats_data['total_size_processed']:,} bytes
+• Ratio promedio: {stats_data['avg_ratio']:.2f}x
+"""
+    
+    await message.reply_text(status_text, parse_mode=ParseMode.MARKDOWN)
+
+@bot.on_message(filters.video | (filters.document & filters.private))
+async def video_handler(client: Client, message: Message):
+    """Manejador de videos"""
     try:
-        # Determinar si es un video válido
-        is_video = False
-        file_size = 0
-        file_name = ""
+        user_id = message.from_user.id
         
+        # Determinar tipo de archivo
         if message.video:
-            # Es un video nativo de Telegram
-            is_video = True
             file_size = message.video.file_size
-            file_name = message.video.file_name or "video_telegram.mp4"
-            mime_type = "video/mp4"
-            
+            file_name = message.video.file_name or f"video_{message.video.file_id[:8]}.mp4"
         elif message.document:
-            # Verificar si es un documento de video usando nuestra función
-            if is_video_document(message):
-                is_video = True
-                file_size = message.document.file_size
-                file_name = message.document.file_name or "video_document.mp4"
-                mime_type = message.document.mime_type or "video/mp4"
-        
-        if not is_video:
-            # No es un video, ignorar
+            file_size = message.document.file_size
+            file_name = message.document.file_name or "video_document"
+        else:
             return
-        
-        logger.info(f"📥 Video recibido: {file_name} ({format_size(file_size)}) de {message.chat.id}")
         
         # Verificar tamaño máximo
         if file_size > MAX_FILE_SIZE:
             await message.reply_text(
-                f"❌ **Video demasiado grande**\n\n"
-                f"Tamaño: {format_size(file_size)}\n"
-                f"Límite máximo: {format_size(MAX_FILE_SIZE)}\n\n"
-                "Por favor, envía un video más pequeño.",
+                f"❌ **Archivo demasiado grande**\n\n"
+                f"Tamaño: {file_size:,} bytes ({file_size / 1024 / 1024 / 1024:.2f} GB)\n"
+                f"Límite: {MAX_FILE_SIZE:,} bytes (4 GB)\n\n"
+                f"Por favor, envía un archivo más pequeño.",
                 parse_mode=ParseMode.MARKDOWN
             )
             return
         
-        # Verificar si la cola está llena
-        with queue_lock:
-            if len(video_queue) >= MAX_QUEUE_SIZE:
-                await message.reply_text(
-                    "❌ **Cola llena**\n\n"
-                    "El sistema tiene demasiados videos en espera ({MAX_QUEUE_SIZE}).\n"
-                    "Por favor, intenta de nuevo en unos minutos.",
-                    parse_mode=ParseMode.MARKDOWN
-                )
-                return
-        
-        # Crear ID único para la tarea
-        task_id = str(uuid.uuid4())[:8]
-        
-        # Notificar descarga
-        download_msg = await message.reply_text(
-            f"📥 **Descargando video...**\n\n"
-            f"📁 `{file_name[:50]}{'...' if len(file_name) > 50 else ''}`\n"
-            f"📦 {format_size(file_size)}\n"
+        # Notificar inicio de descarga
+        status_msg = await message.reply_text(
+            f"📥 **Descargando archivo...**\n\n"
+            f"📁 `{file_name}`\n"
+            f"📦 {file_size:,} bytes\n"
             f"⏳ Por favor espera...",
             parse_mode=ParseMode.MARKDOWN
         )
         
-        # Crear nombre de archivo temporal
-        timestamp = int(time.time())
-        safe_name = re.sub(r'[^\w\-.]', '_', file_name)
-        temp_name = f"temp_{timestamp}_{task_id}_{safe_name}"
-        temp_path = os.path.join(WORK_DIR, temp_name)
+        # Crear nombre único para el archivo
+        unique_id = str(uuid.uuid4())[:12]
+        safe_name = "".join(c for c in file_name if c.isalnum() or c in "._- ")
+        input_path = UPLOAD_DIR / f"{unique_id}_{safe_name}"
         
-        # Descargar el video
+        # Descargar archivo
         try:
-            await message.download(file_name=temp_path)
+            download_start = time.time()
+            await message.download(file_name=str(input_path))
+            download_time = time.time() - download_start
             
             # Verificar descarga
-            if not os.path.exists(temp_path):
-                await download_msg.edit_text("❌ Error al descargar el video (archivo no creado).")
+            if not input_path.exists():
+                await status_msg.edit_text("❌ Error al descargar el archivo")
                 return
                 
-            downloaded_size = os.path.getsize(temp_path)
-            if downloaded_size == 0:
-                await download_msg.edit_text("❌ El archivo descargado está vacío.")
-                try:
-                    os.remove(temp_path)
-                except:
-                    pass
-                return
-                
-            logger.info(f"✅ Video descargado: {file_name} -> {format_size(downloaded_size)}")
-                
+            actual_size = input_path.stat().st_size
+            logger.info(f"✅ Descargado: {file_name} ({actual_size:,} bytes) en {download_time:.1f}s")
+            
         except Exception as e:
-            logger.error(f"❌ Error en descarga: {e}")
-            await download_msg.edit_text(f"❌ Error al descargar el video: {str(e)[:100]}")
+            logger.error(f"Download error: {e}")
+            await status_msg.edit_text(f"❌ Error en descarga: {str(e)[:100]}")
             return
         
         # Agregar a la cola
-        with queue_lock:
-            video_queue.append((task_id, message.chat.id, message.id, temp_path, file_name))
-            position = len(video_queue)
-        
-        # Preparar respuesta
-        response = (
-            f"✅ **Video agregado a la cola**\n\n"
-            f"📁 `{file_name[:50]}{'...' if len(file_name) > 50 else ''}`\n"
-            f"📊 Tamaño: {format_size(file_size)}\n"
-            f"🎯 Posición en cola: {position}\n"
-            f"📋 Total en cola: {len(video_queue)}\n"
-            f"🔄 Procesando ahora: {len(active_processes)}/{MAX_CONCURRENT_PROCESSES}\n\n"
-        )
-        
-        if position == 1 and len(active_processes) < MAX_CONCURRENT_PROCESSES:
-            response += "⚡ **Será procesado inmediatamente.**"
-        else:
-            wait_time = max(0, position - len(active_processes)) * 180  # 3 minutos por video
-            response += f"⏱️ **Tiempo estimado de espera:** {format_time(wait_time)}"
-        
-        # Teclado con opciones
-        keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("📊 Estado", callback_data="status"),
-                InlineKeyboardButton("📋 Ver Cola", callback_data="queue")
-            ],
-            [
-                InlineKeyboardButton("🧹 Limpiar mis videos", callback_data="clean_my")
-            ]
-        ])
-        
-        await download_msg.edit_text(response, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
-        
-    except Exception as e:
-        logger.error(f"❌ Error manejando video: {e}")
         try:
-            await message.reply_text(
-                f"❌ **Error procesando tu video**\n\n"
-                f"Detalle: {str(e)[:150]}\n\n"
-                f"Por favor, intenta de nuevo o contacta al soporte.",
-                parse_mode=ParseMode.MARKDOWN
-            )
+            task_id = TaskManager.add_task(user_id, input_path, file_name, actual_size)
+            
+            with task_lock:
+                position = len(task_queue) + len(active_tasks)
+            
+            # Mensaje de confirmación
+            queue_text = f"""
+✅ **Archivo agregado a la cola**
+
+📁 `{file_name[:50]}{'...' if len(file_name) > 50 else ''}`
+📦 {actual_size:,} bytes
+🎯 Posición: #{position}
+📋 En cola: {len(task_queue)}
+🔄 Procesando: {len(active_tasks)}
+
+"""
+            
+            if position <= MAX_CONCURRENT:
+                queue_text += "⚡ **Será procesado inmediatamente**"
+            else:
+                wait_time = (position - MAX_CONCURRENT) * 300  # 5 minutos estimados
+                queue_text += f"⏱️ **Tiempo estimado:** ~{wait_time // 60} minutos"
+            
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📊 Estado", callback_data="status"),
+                 InlineKeyboardButton("📋 Ver Cola", callback_data="queue")]
+            ])
+            
+            await status_msg.edit_text(queue_text, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
+            
+        except Exception as e:
+            await status_msg.edit_text(f"❌ Error al agregar a la cola: {str(e)[:100]}")
+            # Limpiar archivo descargado
+            try:
+                input_path.unlink()
+            except:
+                pass
+    
+    except Exception as e:
+        logger.error(f"Video handler error: {e}")
+        try:
+            await message.reply_text(f"❌ Error procesando tu archivo: {str(e)[:150]}")
         except:
             pass
 
-@app.on_callback_query()
-async def handle_callback(client, callback_query):
-    """Maneja los botones inline"""
+@bot.on_callback_query()
+async def callback_handler(client: Client, callback_query):
+    """Manejador de botones inline"""
     data = callback_query.data
-    user_id = callback_query.from_user.id
     
     try:
         if data == "status":
-            await status_command(client, callback_query.message)
+            await status_handler(client, callback_query.message)
         elif data == "queue":
-            await queue_command(client, callback_query.message)
-        elif data == "refresh_queue":
-            await queue_command(client, callback_query.message)
-            await callback_query.answer("✅ Cola actualizada")
-        elif data == "clean_my":
-            await clean_command(client, callback_query.message)
-            await callback_query.answer("✅ Limpieza completada")
-        elif data == "howto":
-            await callback_query.message.reply_text(
-                "❓ **Cómo usar el bot:**\n\n"
-                "1. **Envía cualquier video** al bot\n"
-                "2. **Espera a que se descargue** y se agregue a la cola\n"
-                "3. **Mira el progreso** en tiempo real\n"
-                "4. **Recibe tu video comprimido** automáticamente\n\n"
-                "**💡 Consejos:**\n"
-                "• Videos más cortos se procesan más rápido\n"
-                "• Usa /queue para ver tu posición\n"
-                "• Usa /clean para remover tus videos de la cola\n"
-                "• El límite es 500MB por video\n\n"
-                "**🔄 Proceso:** Descarga → Compresión → Envío",
-                parse_mode=ParseMode.MARKDOWN
-            )
-            await callback_query.answer()
-        else:
-            await callback_query.answer("Acción no reconocida")
+            await queue_handler(client, callback_query.message)
+        elif data == "stats":
+            await stats_handler(client, callback_query.message)
         
+        await callback_query.answer()
     except Exception as e:
-        logger.error(f"❌ Error en callback: {e}")
-        await callback_query.answer("❌ Error procesando la acción")
+        logger.error(f"Callback error: {e}")
+        await callback_query.answer("❌ Error procesando la acción", show_alert=True)
 
-# ========== FUNCIÓN DE LIMPIEZA AUTOMÁTICA ==========
-import shutil
+@bot.on_message(filters.command("queue"))
+async def queue_handler(client: Client, message: Message):
+    """Muestra la cola actual"""
+    with task_lock:
+        total_in_queue = len(task_queue)
+        user_tasks = [t for t in list(task_queue) if t["user_id"] == message.from_user.id]
+    
+    if total_in_queue == 0:
+        await message.reply_text(
+            "📭 **La cola está vacía**\n\n"
+            "No hay videos esperando procesamiento. ¡Envía uno! 🎬",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    queue_text = f"📋 **Cola de procesamiento**\n\n"
+    queue_text += f"Total en cola: **{total_in_queue}** videos\n"
+    
+    if user_tasks:
+        queue_text += f"Tus videos en cola: **{len(user_tasks)}**\n\n"
+        
+        for i, task in enumerate(user_tasks[:5], 1):
+            filename = task["filename"][:30] + "..." if len(task["filename"]) > 30 else task["filename"]
+            size_mb = task["size"] / 1024 / 1024
+            queue_text += f"{i}. `{filename}` ({size_mb:.1f} MB)\n"
+    
+    # Información de tiempo estimado
+    with task_lock:
+        active_count = len(active_tasks)
+    
+    if total_in_queue > 0:
+        estimated_minutes = (total_in_queue * 5) // 60
+        estimated_seconds = (total_in_queue * 5) % 60
+        queue_text += f"\n⏱️ **Tiempo estimado total:** {estimated_minutes}min {estimated_seconds}s"
+    
+    await message.reply_text(queue_text, parse_mode=ParseMode.MARKDOWN)
 
-def auto_cleanup():
-    """Limpia archivos temporales antiguos automáticamente"""
-    logger.info("🧹 Iniciando sistema de limpieza automática")
+@bot.on_message(filters.command("stats"))
+async def stats_handler(client: Client, message: Message):
+    """Estadísticas del bot"""
+    stats_text = f"""
+📈 **Estadísticas del Bot**
+
+**📊 Procesamiento:**
+• Total procesado: {stats_data['total_processed']} videos
+• Tamaño total: {stats_data['total_size_processed']:,} bytes
+• Ratio promedio: {stats_data['avg_ratio']:.2f}x
+
+**🎯 Rendimiento:**
+• Uptime: {str(datetime.now() - start_time).split('.')[0]}
+• Máximo concurrente: {MAX_CONCURRENT}
+• Máximo en cola: {MAX_QUEUE_SIZE}
+• Límite por archivo: {MAX_FILE_SIZE / 1024 / 1024 / 1024:.1f} GB
+
+**🌐 Web Service:**
+• Puerto: {PORT}
+• Endpoints disponibles: /health, /stats, /queue
+• Dashboard: http://localhost:{PORT}
+"""
+    
+    await message.reply_text(stats_text, parse_mode=ParseMode.MARKDOWN)
+
+@bot.on_message(filters.command("clean"))
+async def clean_handler(client: Client, message: Message):
+    """Limpia archivos del usuario"""
+    user_id = message.from_user.id
+    cleaned = 0
+    
+    with task_lock:
+        # Remover de la cola
+        new_queue = deque()
+        for task in task_queue:
+            if task["user_id"] == user_id:
+                # Eliminar archivo
+                try:
+                    if os.path.exists(task["file_path"]):
+                        os.remove(task["file_path"])
+                        cleaned += 1
+                except:
+                    pass
+            else:
+                new_queue.append(task)
+        
+        task_queue.clear()
+        task_queue.extend(new_queue)
+    
+    await message.reply_text(
+        f"🧹 **Limpieza completada**\n\n"
+        f"✅ Archivos removidos: {cleaned}\n"
+        f"📋 Videos restantes en cola: {len(task_queue)}",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+# ========== WORKER DE PROCESAMIENTO ==========
+async def process_worker():
+    """Worker que procesa tareas de la cola"""
+    logger.info("🚀 Worker de procesamiento iniciado")
     
     while True:
         try:
-            now = time.time()
-            cleaned_files = 0
-            cleaned_size = 0
+            # Obtener siguiente tarea
+            task = TaskManager.get_next_task()
             
-            # Limpiar archivos con más de 3 horas
-            for filename in os.listdir(WORK_DIR):
-                filepath = os.path.join(WORK_DIR, filename)
-                if os.path.isfile(filepath):
+            if not task:
+                await asyncio.sleep(2)
+                continue
+            
+            task_id = task["id"]
+            user_id = task["user_id"]
+            file_path = task["file_path"]
+            filename = task["filename"]
+            
+            logger.info(f"🎬 Procesando tarea {task_id}: {filename}")
+            
+            # Marcar como activa
+            TaskManager.start_task(task_id, task)
+            
+            # Enviar mensaje de inicio al usuario
+            try:
+                await bot.send_message(
+                    user_id,
+                    f"🎬 **Comenzando compresión**\n\n"
+                    f"📁 `{filename[:50]}{'...' if len(filename) > 50 else ''}`\n"
+                    f"⏳ Preparando...",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except:
+                pass
+            
+            # Función de callback para progreso
+            async def update_progress(percent):
+                TaskManager.update_progress(task_id, percent)
+                
+                # Actualizar cada 10% o cada 30 segundos
+                if int(percent) % 10 == 0 or percent >= 99:
                     try:
-                        file_age = now - os.path.getmtime(filepath)
-                        if file_age > 10800:  # 3 horas
-                            size = os.path.getsize(filepath)
-                            os.remove(filepath)
-                            cleaned_files += 1
-                            cleaned_size += size
-                            logger.debug(f"Auto-cleanup: {filename} ({format_size(size)})")
-                    except Exception as e:
-                        logger.error(f"Error eliminando {filename}: {e}")
+                        progress_bar = "█" * int(percent / 10) + "░" * (10 - int(percent / 10))
+                        await bot.send_message(
+                            user_id,
+                            f"🔄 **Progreso:** {percent:.1f}%\n"
+                            f"{progress_bar}\n"
+                            f"📁 `{filename[:40]}...`",
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                    except:
+                        pass
             
-            if cleaned_files > 0:
-                logger.info(f"🧹 Auto-cleanup: {cleaned_files} archivos, {format_size(cleaned_size)}")
+            # Crear ruta de salida
+            output_filename = f"compressed_{task_id}_{filename}"
+            output_path = OUTPUT_DIR / output_filename
             
-            # Esperar 30 minutos antes de la próxima limpieza
-            time.sleep(1800)
+            try:
+                # Obtener información del video
+                video_info = VideoProcessor.get_video_info(file_path)
+                
+                if not video_info:
+                    raise Exception("No se pudo obtener información del video")
+                
+                # Calcular configuración óptima
+                target_size_mb = min(100, task["size"] / 1024 / 1024 / 10)  # 10% del original, max 100MB
+                settings = VideoProcessor.calculate_optimal_settings(video_info, target_size_mb)
+                
+                # Comprimir video
+                result = await VideoProcessor.compress_video(
+                    file_path,
+                    str(output_path),
+                    settings,
+                    update_progress
+                )
+                
+                if result["success"]:
+                    # Calcular estadísticas
+                    original_size = result["original_size"]
+                    compressed_size = result["compressed_size"]
+                    saved = original_size - compressed_size
+                    saved_percent = (saved / original_size) * 100 if original_size > 0 else 0
+                    ratio = original_size / compressed_size if compressed_size > 0 else 1
+                    
+                    # Enviar video comprimido
+                    try:
+                        await bot.send_video(
+                            user_id,
+                            video=str(output_path),
+                            caption=(
+                                f"✅ **Video comprimido exitosamente!**\n\n"
+                                f"📁 `{filename}`\n\n"
+                                f"📊 **Resultados:**\n"
+                                f"• Original: {original_size:,} bytes\n"
+                                f"• Comprimido: {compressed_size:,} bytes\n"
+                                f"• Ahorro: {saved_percent:.1f}%\n"
+                                f"• Ratio: {ratio:.1f}x\n"
+                                f"• Resolución: {settings['resolution']}"
+                            ),
+                            parse_mode=ParseMode.MARKDOWN,
+                            supports_streaming=True
+                        )
+                        
+                        # Marcar como completada
+                        TaskManager.complete_task(task_id, {
+                            "original_size": original_size,
+                            "compressed_size": compressed_size,
+                            "ratio": ratio
+                        })
+                        
+                    except Exception as send_error:
+                        logger.error(f"Error sending video: {send_error}")
+                        await bot.send_message(
+                            user_id,
+                            f"✅ Video comprimido pero no pude enviarlo.\n"
+                            f"Tamaño: {compressed_size:,} bytes\n"
+                            f"Ratio: {ratio:.1f}x\n\n"
+                            f"Error: {str(send_error)[:100]}"
+                        )
+                else:
+                    raise Exception(result.get("error", "Unknown compression error"))
+                
+            except Exception as e:
+                logger.error(f"Task {task_id} failed: {e}")
+                TaskManager.fail_task(task_id, e)
+                
+                # Notificar al usuario
+                try:
+                    await bot.send_message(
+                        user_id,
+                        f"❌ **Error en compresión**\n\n"
+                        f"📁 `{filename}`\n"
+                        f"🔧 Error: {str(e)[:150]}\n\n"
+                        f"Por favor, intenta con otro video.",
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                except:
+                    pass
             
+            finally:
+                # Limpiar archivos temporales
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                    if 'output_path' in locals() and os.path.exists(output_path):
+                        os.remove(output_path)
+                except:
+                    pass
+        
         except Exception as e:
-            logger.error(f"❌ Error en auto-cleanup: {e}")
-            time.sleep(300)
+            logger.error(f"Worker error: {e}")
+            await asyncio.sleep(5)
 
-# ========== INICIALIZACIÓN Y EJECUCIÓN ==========
+# ========== INICIALIZACIÓN ==========
 async def main():
-    """Función principal del bot"""
-    global processor, app_start_time
-    
-    app_start_time = time.time()
-    
-    # Verificar que ffmpeg esté instalado
-    logger.info("🔍 Verificando dependencias...")
-    try:
-        ffmpeg_check = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True, timeout=10)
-        if ffmpeg_check.returncode != 0:
-            raise Exception("FFmpeg no responde correctamente")
-        logger.info(f"✅ FFmpeg: {ffmpeg_check.stdout.split('version')[1].split()[0] if 'version' in ffmpeg_check.stdout else 'Disponible'}")
-    except Exception as e:
-        logger.error(f"❌ ERROR CRÍTICO: FFmpeg no está instalado o no funciona: {e}")
-        print("\n" + "="*60)
-        print("❌ ERROR: FFmpeg NO ESTÁ INSTALADO O NO FUNCIONA")
-        print("="*60)
-        print("Instala FFmpeg según tu sistema:")
-        print("• Ubuntu/Debian: sudo apt install ffmpeg")
-        print("• CentOS/RHEL: sudo yum install ffmpeg")
-        print("• macOS: brew install ffmpeg")
-        print("• Windows: Descarga desde ffmpeg.org")
-        print("="*60)
-        return
+    """Función principal"""
+    logger.info("🚀 Iniciando Video Compression Bot Pro...")
     
     # Iniciar Flask en hilo separado
+    def run_flask():
+        flask_app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
+    
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    logger.info(f"🌐 Servidor Flask iniciado en puerto {os.environ.get('PORT', 10000)}")
+    logger.info(f"🌐 Flask iniciado en puerto {PORT}")
     
-    # Iniciar limpieza automática
-    cleanup_thread = threading.Thread(target=auto_cleanup, daemon=True)
-    cleanup_thread.start()
-    logger.info("🧹 Sistema de limpieza automática iniciado")
-    
-    # Iniciar procesador de videos
-    processor = VideoProcessor(app)
-    processor.start()
-    logger.info("🔄 Procesador de videos iniciado")
+    # Iniciar worker de procesamiento
+    worker_task = asyncio.create_task(process_worker())
     
     # Iniciar bot de Telegram
-    await app.start()
+    await bot.start()
     
-    # Obtener información del bot
-    bot_info = await app.get_me()
-    logger.info(f"✅ Bot de Telegram iniciado: @{bot_info.username} (ID: {bot_info.id})")
+    bot_info = await bot.get_me()
+    logger.info(f"🤖 Bot iniciado: @{bot_info.username}")
     
-    # Mensaje de inicio completo
+    # Limpiador automático de archivos temporales
+    async def cleanup_worker():
+        while True:
+            try:
+                now = time.time()
+                for dir_path in [UPLOAD_DIR, OUTPUT_DIR]:
+                    for file in dir_path.iterdir():
+                        if file.is_file():
+                            file_age = now - file.stat().st_mtime
+                            if file_age > 3600:  # 1 hora
+                                try:
+                                    file.unlink()
+                                    logger.debug(f"🗑️ Auto-cleanup: {file.name}")
+                                except:
+                                    pass
+            except Exception as e:
+                logger.error(f"Cleanup error: {e}")
+            await asyncio.sleep(1800)  # 30 minutos
+    
+    cleanup_task = asyncio.create_task(cleanup_worker())
+    
+    # Mensaje de inicio
     print("\n" + "="*60)
-    print("🎬 BOT DE COMPRESIÓN DE VIDEOS INICIADO")
+    print("🎬 VIDEO COMPRESSION BOT PRO - VERSION 2.0.0")
     print("="*60)
     print(f"🤖 Bot: @{bot_info.username}")
-    print(f"🆔 ID: {bot_info.id}")
-    print(f"🌐 Web Server: http://0.0.0.0:{os.environ.get('PORT', 10000)}")
+    print(f"🌐 Web Dashboard: http://0.0.0.0:{PORT}")
     print(f"📊 Health Check: /health")
-    print(f"💾 Directorio: {WORK_DIR}")
-    print(f"🚀 Procesos máx: {MAX_CONCURRENT_PROCESSES}")
-    print(f"📋 Cola máx: {MAX_QUEUE_SIZE}")
-    print(f"📦 Tamaño máx: {format_size(MAX_FILE_SIZE)}")
+    print(f"💾 Work Directory: {WORK_DIR}")
+    print(f"🚀 Max File Size: {MAX_FILE_SIZE / 1024 / 1024 / 1024:.1f} GB")
+    print(f"⚡ Max Concurrent: {MAX_CONCURRENT}")
+    print(f"📋 Max Queue: {MAX_QUEUE_SIZE}")
     print("="*60)
-    print("✅ ¡Bot listo para recibir videos!")
-    print("="*60 + "\n")
+    print("✅ ¡Bot listo para procesar videos de hasta 4GB!")
+    print("="*60)
     
-    # Enviar mensaje al admin si está configurado
+    # Notificar al admin
     try:
-        if ADMIN_USER_ID:
-            await app.send_message(
-                int(ADMIN_USER_ID),
-                f"✅ **Bot iniciado exitosamente**\n\n"
-                f"• 🤖 @{bot_info.username}\n"
-                f"• 🌐 Web: puerto {os.environ.get('PORT', 10000)}\n"
-                f"• 🕒 Hora: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
-                f"• 💾 Dir: {WORK_DIR}\n\n"
-                f"¡Listo para comprimir videos!",
-                parse_mode=ParseMode.MARKDOWN
-            )
-    except Exception as e:
-        logger.error(f"No se pudo notificar al admin: {e}")
+        await bot.send_message(
+            ADMIN_ID,
+            f"🚀 **Bot iniciado exitosamente**\n\n"
+            f"• 🤖 @{bot_info.username}\n"
+            f"• 🌐 Web: puerto {PORT}\n"
+            f"• 🕒 Hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"• 💾 Dir: {WORK_DIR}\n"
+            f"• 📊 Stats: http://0.0.0.0:{PORT}/stats\n\n"
+            f"¡Listo para comprimir videos de hasta 4GB!",
+            parse_mode=ParseMode.MARKDOWN
+        )
+    except:
+        pass
     
-    # Mantener el bot ejecutándose
+    # Mantener ejecución
     try:
-        await asyncio.Event().wait()
-    except asyncio.CancelledError:
-        logger.info("Bot interrumpido")
+        await idle()
+    finally:
+        await bot.stop()
+        worker_task.cancel()
+        cleanup_task.cancel()
 
 if __name__ == "__main__":
-    # Verificar e importar psutil si está disponible
+    # Verificar dependencias críticas
     try:
-        import psutil
-        logger.info("✅ psutil disponible para monitoreo")
-    except ImportError:
-        logger.warning("⚠️ psutil no instalado, algunas funciones de monitoreo no estarán disponibles")
-        # Crear un stub para psutil
-        class psutil_stub:
-            @staticmethod
-            def cpu_percent():
-                return 0
-            class virtual_memory:
-                percent = 0
-                used = 0
-                total = 0
-            class disk_usage:
-                def __init__(self, path):
-                    self.percent = 0
-                    self.used = 0
-                    self.total = 0
-        
-        import sys
-        sys.modules['psutil'] = psutil_stub()
-        psutil = psutil_stub
+        import nest_asyncio
+        nest_asyncio.apply()
+    except:
+        pass
     
-    # Ejecutar el bot
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("\n⏹️ Bot detenido por el usuario (Ctrl+C)")
-        if processor:
-            processor.stop()
-            processor.join(timeout=5)
+        logger.info("\n⏹️ Bot detenido por el usuario")
         print("\n👋 Bot detenido exitosamente")
     except Exception as e:
         logger.error(f"❌ Error fatal: {e}")
-        print(f"\n❌ Error fatal: {e}")
         import traceback
         traceback.print_exc()
-    finally:
-        # Limpieza final
-        try:
-            # Limpiar archivos temporales
-            for filename in os.listdir(WORK_DIR):
-                filepath = os.path.join(WORK_DIR, filename)
-                if os.path.isfile(filepath):
-                    try:
-                        os.remove(filepath)
-                    except:
-                        pass
-        except:
-            pass
-        
-        print("\n🧹 Limpieza final completada")
